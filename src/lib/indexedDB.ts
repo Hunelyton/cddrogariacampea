@@ -35,9 +35,14 @@ export interface Product {
 
 export interface Count {
   id?: number;
+  codLocalizador?: string;
   ean: string;
   quantidade: string;
   quantidadeAjustada?: string;
+  lote?: string;
+  validade?: string;
+  codigoLv?: string;
+  descricaoLocalizador?: string;
   secao: string;
   coletor: string;
   inventariador: string;
@@ -337,7 +342,7 @@ export const getProductsByEans = async (eans: string[]): Promise<Map<string, Pro
 /**
  * Deleta contagens por produto
  */
-export const deleteCountsByProduct = async (produto: string): Promise<void> => {
+export const deleteCountsByProduct = async (produto: string, lote?: string): Promise<void> => {
   const db = await openDB();
   const transaction = db.transaction([COUNTS_STORE], "readwrite");
   const store = transaction.objectStore(COUNTS_STORE);
@@ -346,7 +351,10 @@ export const deleteCountsByProduct = async (produto: string): Promise<void> => {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
       const counts = request.result as Count[];
-      const countsToDelete = counts.filter(c => c.produto === produto);
+      const normalizedLot = lote?.trim() || "";
+      const countsToDelete = counts.filter(c =>
+        c.produto === produto && (c.lote?.trim() || "") === normalizedLot
+      );
       
       countsToDelete.forEach(count => {
         if (count.id) {
@@ -367,7 +375,11 @@ export const deleteCountsByProduct = async (produto: string): Promise<void> => {
 /**
  * Atualiza quantidade ajustada por produto
  */
-export const updateCountsByProduct = async (produto: string, quantidadeAjustada: string): Promise<void> => {
+export const updateCountsByProduct = async (
+  produto: string,
+  quantidadeAjustada: string,
+  lote?: string
+): Promise<void> => {
   const db = await openDB();
   const transaction = db.transaction([COUNTS_STORE], "readwrite");
   const store = transaction.objectStore(COUNTS_STORE);
@@ -376,7 +388,10 @@ export const updateCountsByProduct = async (produto: string, quantidadeAjustada:
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
       const counts = request.result as Count[];
-      const countsToUpdate = counts.filter(c => c.produto === produto);
+      const normalizedLot = lote?.trim() || "";
+      const countsToUpdate = counts.filter(c =>
+        c.produto === produto && (c.lote?.trim() || "") === normalizedLot
+      );
       
       // Distribui a quantidade ajustada total entre os registros
       // O primeiro registro recebe a quantidade total, os demais recebem 0

@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo, useCallback, memo } from "react";
+import * as XLSX from "xlsx";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Search, ArrowUpDown, ArrowUp, ArrowDown, FileDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import pdfMake from "pdfmake/build/pdfmake";
-// @ts-ignore
+import type { TDocumentDefinitions } from "pdfmake/interfaces";
+// @ts-expect-error O módulo de fontes não expõe tipos compatíveis com o build do pdfMake.
 import pdfFonts from "pdfmake/build/vfs_fonts";
 import { toast } from "sonner";
 import {
@@ -19,14 +21,18 @@ import { getAllProducts, getAllCounts } from "@/lib/indexedDB";
 import { parseBRNumber } from "@/lib/utils";
 import { useDebounce } from "@/hooks/use-debounce";
 
-type SortField = "produto" | "ean1" | "descricao" | "secao" | "coletor" | "inventariador" | "custo" | "qtdeLoja" | "qtdeEscaneada" | "qtdeDivergente" | "valorDiferenca";
+type SortField = "codLocalizador" | "descricaoLocalizador" | "codigoLv" | "produto" | "ean1" | "descricao" | "lote" | "validade" | "coletor" | "inventariador" | "custo" | "qtdeLoja" | "qtdeEscaneada" | "qtdeDivergente" | "valorDiferenca";
 type SortDirection = "asc" | "desc" | null;
 
 interface Discrepancy {
+  codLocalizador: string;
+  descricaoLocalizador: string;
+  codigoLv: string;
   produto: string;
   ean1: string;
   descricao: string;
-  secao: string;
+  lote: string;
+  validade: string;
   coletor: string;
   inventariador: string;
   custo: number;
@@ -37,15 +43,39 @@ interface Discrepancy {
   controlado: string;
 }
 
+interface CountLotGroup {
+  produto: string;
+  quantidadeAjustada: number;
+  codLocalizador: string;
+  codigoLv: string;
+  lote: string;
+  validade: string;
+  coletor: string;
+  inventariador: string;
+  descricao: string;
+  ean: string;
+}
+
+const normalizeLot = (lot?: string) => lot?.trim().toUpperCase() || "";
+const countLotKey = (produto: string, lote?: string) => `${produto}\u0000${normalizeLot(lote)}`;
+
 const PAGE_SIZE = 50;
 
 // Componente de linha memoizado
 const DiscrepancyRow = memo(({ disc }: { disc: Discrepancy }) => (
   <TableRow>
+    <TableCell>
+      <div>{disc.codLocalizador || "-"}</div>
+      <div className="text-xs text-muted-foreground">
+        {disc.descricaoLocalizador || "-"}
+      </div>
+    </TableCell>
+    <TableCell>{disc.codigoLv || "-"}</TableCell>
     <TableCell>{disc.produto}</TableCell>
     <TableCell>{disc.ean1}</TableCell>
     <TableCell>{disc.descricao}</TableCell>
-    <TableCell>{disc.secao}</TableCell>
+    <TableCell>{disc.lote || "-"}</TableCell>
+    <TableCell>{disc.validade || "-"}</TableCell>
     <TableCell>{disc.coletor}</TableCell>
     <TableCell>{disc.inventariador}</TableCell>
     <TableCell>R$ {disc.custo.toFixed(2)}</TableCell>
@@ -80,106 +110,125 @@ export const DiscrepanciesTable = memo(() => {
     setCurrentPage(1);
   }, [debouncedSearchTerm, showControlled, showNotRegistered]);
 
-  useEffect(() => {
-    loadDiscrepancies();
-  }, []);
-
   const loadDiscrepancies = useCallback(async () => {
     setIsLoading(true);
     const products = await getAllProducts();
     const counts = await getAllCounts();
 
-    // Group counts by product
-    const countsByProduct = counts.reduce((acc, count) => {
+    // Cada lote do mesmo produto é uma contagem independente.
+    const countsByLot = counts.reduce((acc, count) => {
       const produto = count.produto || "N/A";
-      if (!acc[produto]) {
-        acc[produto] = {
-          quantidadeEscaneada: 0,
+      const lote = count.lote?.trim() || "";
+      const key = countLotKey(produto, lote);
+      if (!acc[key]) {
+        acc[key] = {
+          produto,
           quantidadeAjustada: 0,
-          secao: count.secao || "",
+          codLocalizador: count.codLocalizador || "",
+          codigoLv: count.codigoLv || "",
+          lote,
+          validade: count.validade || "",
           coletor: count.coletor || "",
           inventariador: count.inventariador || "",
+          descricao: count.descricao || "",
+          ean: count.ean || "",
         };
       }
-      acc[produto].quantidadeEscaneada += parseInt(count.quantidade) || 0;
-      acc[produto].quantidadeAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
+      acc[key].quantidadeAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
       return acc;
-    }, {} as Record<string, { quantidadeEscaneada: number; quantidadeAjustada: number; secao: string; coletor: string; inventariador: string }>);
+    }, {} as Record<string, CountLotGroup>);
 
-    // Calculate discrepancies
     const discrepanciesList: Discrepancy[] = [];
-    
-    for (const product of products) {
-      let countData = countsByProduct[product.produto];
-      
-      if (!countData) {
-        const eans = [
-          product.ean1, product.ean2, product.ean3, product.ean4,
-          product.ean5, product.ean6, product.ean7, product.ean8,
-          product.ean9, product.ean10, product.ean11, product.ean12
-        ].filter(Boolean);
-        
-        for (const ean of eans) {
-          if (countsByProduct[ean]) {
-            countData = countsByProduct[ean];
-            break;
-          }
-        }
-      }
-      
-      if (countData) {
-        const qtdeLoja = parseBRNumber(product.saldo);
-        const qtdeAjustada = countData.quantidadeAjustada;
-        const qtdeDivergente = qtdeAjustada - qtdeLoja;
-        
-        if (qtdeDivergente !== 0) {
-          const custo = parseBRNumber(product.custoGerencial);
-          const valorDiferenca = custo * qtdeDivergente;
-          
-          discrepanciesList.push({
-            produto: product.produto,
-            ean1: product.ean1 || "",
-            descricao: product.descricao1 || "",
-            secao: countData.secao,
-            coletor: countData.coletor,
-            inventariador: countData.inventariador,
-            custo: custo,
-            qtdeLoja: qtdeLoja,
-            qtdeEscaneada: countData.quantidadeAjustada,
-            qtdeDivergente: qtdeDivergente,
-            valorDiferenca: valorDiferenca,
-            controlado: product.controlado || "",
-          });
-        }
-      } else {
-        const qtdeLoja = parseBRNumber(product.saldo);
-        if (qtdeLoja !== 0) {
-          const custo = parseBRNumber(product.custoGerencial);
-          const qtdeAjustada = 0;
-          const qtdeDivergente = qtdeAjustada - qtdeLoja;
-          const valorDiferenca = custo * qtdeDivergente;
+    const handledCountKeys = new Set<string>();
+    const handledProductsWithoutLot = new Set<string>();
 
-          discrepanciesList.push({
-            produto: product.produto,
-            ean1: product.ean1 || "",
-            descricao: product.descricao1 || "",
-            secao: "",
-            coletor: "",
-            inventariador: "",
-            custo: custo,
-            qtdeLoja: qtdeLoja,
-            qtdeEscaneada: 0,
-            qtdeDivergente: qtdeDivergente,
-            valorDiferenca: valorDiferenca,
-            controlado: product.controlado || "",
-          });
-        }
+    const addDiscrepancy = (
+      product: (typeof products)[number],
+      countData: CountLotGroup | undefined,
+      qtdeLoja: number,
+      qtdeEscaneada: number,
+      lote: string
+    ) => {
+      const qtdeDivergente = qtdeEscaneada - qtdeLoja;
+      if (qtdeDivergente === 0) return;
+      const custo = parseBRNumber(product.custoGerencial);
+      discrepanciesList.push({
+        codLocalizador: countData?.codLocalizador || product.codLocalizador || "",
+        descricaoLocalizador: product.descricaoLocalizador || "",
+        codigoLv: countData?.codigoLv || product.codigoLv || "",
+        produto: product.produto,
+        ean1: product.ean1 || countData?.ean || "",
+        descricao: product.descricao1 || countData?.descricao || "",
+        lote,
+        validade: countData?.validade || product.validade || "",
+        coletor: countData?.coletor || "",
+        inventariador: countData?.inventariador || "",
+        custo,
+        qtdeLoja,
+        qtdeEscaneada,
+        qtdeDivergente,
+        valorDiferenca: custo * qtdeDivergente,
+        controlado: product.controlado || "",
+      });
+    };
+
+    for (const product of products) {
+      const productLot = product.lote?.trim() || "";
+      const qtdeLoja = parseBRNumber(product.saldo);
+
+      if (productLot) {
+        const key = countLotKey(product.produto, productLot);
+        const countData = countsByLot[key];
+        if (countData) handledCountKeys.add(key);
+        addDiscrepancy(product, countData, qtdeLoja, countData?.quantidadeAjustada || 0, productLot);
+      } else {
+        if (handledProductsWithoutLot.has(product.produto)) continue;
+        handledProductsWithoutLot.add(product.produto);
+        const productCounts = Object.entries(countsByLot)
+          .filter(([, group]) => group.produto === product.produto);
+        productCounts.forEach(([key]) => handledCountKeys.add(key));
+        const total = productCounts.reduce((sum, [, group]) => sum + group.quantidadeAjustada, 0);
+        const firstCount = productCounts[0]?.[1];
+        const lots = [...new Set(productCounts.map(([, group]) => group.lote).filter(Boolean))].join(" / ");
+        addDiscrepancy(product, firstCount, qtdeLoja, total, lots);
+      }
+    }
+
+    // Um lote contado que não existe no cadastro é uma sobra daquele lote.
+    for (const [key, countData] of Object.entries(countsByLot)) {
+      if (handledCountKeys.has(key)) continue;
+      const product = products.find((item) => item.produto === countData.produto);
+      if (product) {
+        addDiscrepancy(product, countData, 0, countData.quantidadeAjustada, countData.lote);
+      } else {
+        discrepanciesList.push({
+          codLocalizador: countData.codLocalizador,
+          descricaoLocalizador: "",
+          codigoLv: countData.codigoLv,
+          produto: countData.produto,
+          ean1: countData.ean,
+          descricao: "Produto não cadastrado",
+          lote: countData.lote,
+          validade: countData.validade,
+          coletor: countData.coletor,
+          inventariador: countData.inventariador,
+          custo: 0,
+          qtdeLoja: 0,
+          qtdeEscaneada: countData.quantidadeAjustada,
+          qtdeDivergente: countData.quantidadeAjustada,
+          valorDiferenca: 0,
+          controlado: "",
+        });
       }
     }
 
     setDiscrepancies(discrepanciesList);
     setIsLoading(false);
   }, []);
+
+  useEffect(() => {
+    loadDiscrepancies();
+  }, [loadDiscrepancies]);
 
   const handleSort = useCallback((field: SortField) => {
     setSortField(prevField => {
@@ -215,7 +264,11 @@ export const DiscrepanciesTable = memo(() => {
         disc.produto?.toLowerCase().includes(search) ||
         disc.ean1?.toLowerCase().includes(search) ||
         disc.descricao?.toLowerCase().includes(search) ||
-        disc.secao?.toLowerCase().includes(search) ||
+        disc.codLocalizador?.toLowerCase().includes(search) ||
+        disc.descricaoLocalizador?.toLowerCase().includes(search) ||
+        disc.codigoLv?.toLowerCase().includes(search) ||
+        disc.lote?.toLowerCase().includes(search) ||
+        disc.validade?.toLowerCase().includes(search) ||
         disc.coletor?.toLowerCase().includes(search) ||
         disc.inventariador?.toLowerCase().includes(search)
       );
@@ -224,7 +277,7 @@ export const DiscrepanciesTable = memo(() => {
       const matchesControlled = !showControlled || isControlled;
 
       const isNotRegistered = disc.descricao === "Produto não cadastrado";
-      const matchesNotRegistered = !showNotRegistered || isNotRegistered;
+      const matchesNotRegistered = showNotRegistered ? isNotRegistered : !isNotRegistered;
 
       return matchesSearch && matchesControlled && matchesNotRegistered;
     });
@@ -261,7 +314,7 @@ export const DiscrepanciesTable = memo(() => {
 
   const exportToPDF = useCallback(async () => {
     try {
-      // @ts-ignore
+      // @ts-expect-error Compatibilidade entre as estruturas de fontes das versões do pdfMake.
       pdfMake.vfs = pdfFonts.pdfMake ? pdfFonts.pdfMake.vfs : pdfFonts.vfs;
 
       let logoBase64 = '';
@@ -286,8 +339,8 @@ export const DiscrepanciesTable = memo(() => {
         .reduce((sum, d) => sum + d.valorDiferenca, 0);
       const financialDifference = positiveDiscrepancy + negativeDiscrepancy;
 
-      const docDefinition: any = {
-        pageSize: 'A4',
+      const docDefinition: TDocumentDefinitions = {
+        pageSize: 'A3',
         pageOrientation: 'landscape',
         pageMargins: [40, logoBase64 ? 130 : 80, 40, 60],
         header: logoBase64 ? {
@@ -318,13 +371,16 @@ export const DiscrepanciesTable = memo(() => {
             style: 'tableStyle',
             table: {
               headerRows: 1,
-              widths: ['auto', 'auto', '*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
+              widths: ['auto', 'auto', 'auto', 'auto', '*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
               body: [
                 [
+                  { text: 'LOCALIZADOR', style: 'tableHeader' },
+                  { text: 'CÓDIGO LV', style: 'tableHeader' },
                   { text: 'PRODUTO', style: 'tableHeader' },
                   { text: 'EAN 1', style: 'tableHeader' },
                   { text: 'DESCRIÇÃO', style: 'tableHeader' },
-                  { text: 'SEÇÃO', style: 'tableHeader' },
+                  { text: 'LOTE', style: 'tableHeader' },
+                  { text: 'VALIDADE', style: 'tableHeader' },
                   { text: 'COLETOR', style: 'tableHeader' },
                   { text: 'INVENTARIADOR', style: 'tableHeader' },
                   { text: 'CUSTO', style: 'tableHeader' },
@@ -334,10 +390,13 @@ export const DiscrepanciesTable = memo(() => {
                   { text: 'VALOR DIFERENÇA', style: 'tableHeader' },
                 ],
                 ...sortedDiscrepancies.map(disc => [
+                  { text: [disc.codLocalizador || '-', disc.descricaoLocalizador ? `\n${disc.descricaoLocalizador}` : ''], fontSize: 7 },
+                  { text: disc.codigoLv || '-', fontSize: 7 },
                   { text: disc.produto, fontSize: 8 },
                   { text: disc.ean1, fontSize: 8 },
                   { text: disc.descricao, fontSize: 8 },
-                  { text: disc.secao, fontSize: 8 },
+                  { text: disc.lote || '-', fontSize: 8 },
+                  { text: disc.validade || '-', fontSize: 8 },
                   { text: disc.coletor, fontSize: 8 },
                   { text: disc.inventariador, fontSize: 8 },
                   { text: `R$ ${disc.custo.toFixed(2)}`, fontSize: 8 },
@@ -462,6 +521,49 @@ export const DiscrepanciesTable = memo(() => {
     }
   }, [sortedDiscrepancies]);
 
+  const exportToExcel = useCallback(() => {
+    if (sortedDiscrepancies.length === 0) {
+      toast.error("Não há divergências para exportar");
+      return;
+    }
+
+    const rows = sortedDiscrepancies.map((disc) => ({
+      LOCALIZADOR: disc.codLocalizador,
+      "DESCRIÇÃO LOCALIZADOR": disc.descricaoLocalizador,
+      "CÓDIGO LV": disc.codigoLv,
+      PRODUTO: disc.produto,
+      "EAN 1": disc.ean1,
+      "DESCRIÇÃO": disc.descricao,
+      LOTE: disc.lote,
+      VALIDADE: disc.validade,
+      COLETOR: disc.coletor,
+      INVENTARIADOR: disc.inventariador,
+      CUSTO: disc.custo,
+      "QTDE LOJA": disc.qtdeLoja,
+      "QTDE ESCANEADA": disc.qtdeEscaneada,
+      "QTDE DIVERGENTE": disc.qtdeDivergente,
+      "VALOR DIFERENÇA": disc.valorDiferenca,
+      CONTROLADO: disc.controlado,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet["!cols"] = [
+      { wch: 18 }, { wch: 28 }, { wch: 16 }, { wch: 14 }, { wch: 18 },
+      { wch: 40 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 24 },
+      { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 20 }, { wch: 20 },
+      { wch: 12 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Divergências");
+    XLSX.writeFile(
+      workbook,
+      `divergencias_filtradas_${new Date().toISOString().split("T")[0]}.xlsx`
+    );
+
+    toast.success(`${rows.length} divergências exportadas para Excel!`);
+  }, [sortedDiscrepancies]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col md:flex-row gap-4 items-start md:items-end justify-between">
@@ -484,6 +586,15 @@ export const DiscrepanciesTable = memo(() => {
           >
             <FileDown className="w-4 h-4" />
             Exportar PDF
+          </Button>
+          <Button
+            onClick={exportToExcel}
+            variant="outline"
+            className="gap-2"
+            disabled={sortedDiscrepancies.length === 0}
+          >
+            <FileDown className="w-4 h-4" />
+            Exportar Excel
           </Button>
           
           <div className="flex flex-col md:flex-row gap-4">
@@ -523,6 +634,16 @@ export const DiscrepanciesTable = memo(() => {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("codLocalizador")}>
+                  <div className="flex items-center gap-2">
+                    LOCALIZADOR {getSortIcon("codLocalizador")}
+                  </div>
+                </TableHead>
+                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("codigoLv")}>
+                  <div className="flex items-center gap-2">
+                    CÓDIGO LV {getSortIcon("codigoLv")}
+                  </div>
+                </TableHead>
                 <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("produto")}>
                   <div className="flex items-center gap-2">
                     PRODUTO {getSortIcon("produto")}
@@ -538,9 +659,14 @@ export const DiscrepanciesTable = memo(() => {
                     DESCRIÇÃO {getSortIcon("descricao")}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("secao")}>
+                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("lote")}>
                   <div className="flex items-center gap-2">
-                    SEÇÃO {getSortIcon("secao")}
+                    LOTE {getSortIcon("lote")}
+                  </div>
+                </TableHead>
+                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("validade")}>
+                  <div className="flex items-center gap-2">
+                    VALIDADE {getSortIcon("validade")}
                   </div>
                 </TableHead>
                 <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("coletor")}>
@@ -583,13 +709,13 @@ export const DiscrepanciesTable = memo(() => {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={14} className="text-center py-12 text-muted-foreground">
                     Carregando divergências...
                   </TableCell>
                 </TableRow>
               ) : paginatedDiscrepancies.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={14} className="text-center py-12 text-muted-foreground">
                     Nenhuma divergência identificada.
                   </TableCell>
                 </TableRow>

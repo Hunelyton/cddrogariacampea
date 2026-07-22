@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, memo } from "react";
 import { Input } from "@/components/ui/input";
-import { Search, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Search, ArrowUpDown, ArrowUp, ArrowDown, Eye, EyeOff } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -24,7 +24,7 @@ interface ProductsTableProps {
 const PAGE_SIZE = 50;
 
 // Componente de linha memoizado
-const ProductRow = memo(({ product }: { product: Product }) => (
+const ProductRow = memo(({ product, showAllEans }: { product: Product; showAllEans: boolean }) => (
   <TableRow>
     <TableCell>{product.empresa}</TableCell>
     <TableCell>{product.produto}</TableCell>
@@ -35,15 +35,19 @@ const ProductRow = memo(({ product }: { product: Product }) => (
     <TableCell>{product.ean1}</TableCell>
     <TableCell>{product.ean2}</TableCell>
     <TableCell>{product.ean3}</TableCell>
-    <TableCell>{product.ean4}</TableCell>
-    <TableCell>{product.ean5}</TableCell>
-    <TableCell>{product.ean6}</TableCell>
-    <TableCell>{product.ean7}</TableCell>
-    <TableCell>{product.ean8}</TableCell>
-    <TableCell>{product.ean9}</TableCell>
-    <TableCell>{product.ean10}</TableCell>
-    <TableCell>{product.ean11}</TableCell>
-    <TableCell>{product.ean12}</TableCell>
+    {showAllEans && (
+      <>
+        <TableCell>{product.ean4}</TableCell>
+        <TableCell>{product.ean5}</TableCell>
+        <TableCell>{product.ean6}</TableCell>
+        <TableCell>{product.ean7}</TableCell>
+        <TableCell>{product.ean8}</TableCell>
+        <TableCell>{product.ean9}</TableCell>
+        <TableCell>{product.ean10}</TableCell>
+        <TableCell>{product.ean11}</TableCell>
+        <TableCell>{product.ean12}</TableCell>
+      </>
+    )}
     <TableCell>{product.lote}</TableCell>
     <TableCell>{product.validade}</TableCell>
     <TableCell>{product.codLocalizador}</TableCell>
@@ -61,6 +65,7 @@ export const ProductsTable = memo(({ refreshTrigger }: ProductsTableProps) => {
   const [sortField, setSortField] = useState<SortField | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [showAllEans, setShowAllEans] = useState(false);
 
   // Debounce do termo de busca
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
@@ -70,22 +75,22 @@ export const ProductsTable = memo(({ refreshTrigger }: ProductsTableProps) => {
     setCurrentPage(1);
   }, [debouncedSearchTerm]);
 
-  useEffect(() => {
-    loadProducts();
-  }, []);
-
-  useEffect(() => {
-    if (refreshTrigger && refreshTrigger > 0) {
-      loadProducts();
-    }
-  }, [refreshTrigger]);
-
   const loadProducts = useCallback(async () => {
     setIsLoading(true);
     const data = await getAllProducts();
     setProducts(data);
     setIsLoading(false);
   }, []);
+
+  useEffect(() => {
+    loadProducts();
+  }, [loadProducts]);
+
+  useEffect(() => {
+    if (refreshTrigger && refreshTrigger > 0) {
+      loadProducts();
+    }
+  }, [refreshTrigger, loadProducts]);
 
   const handleSort = useCallback((field: SortField) => {
     setSortField(prevField => {
@@ -162,15 +167,26 @@ export const ProductsTable = memo(({ refreshTrigger }: ProductsTableProps) => {
 
   return (
     <div className="space-y-4">
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-        <Input
-          type="text"
-          placeholder="Buscar por produto, descrição ou EAN..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-10"
-        />
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+          <Input
+            type="text"
+            placeholder="Buscar por produto, descrição ou EAN..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setShowAllEans((current) => !current)}
+          className="gap-2"
+        >
+          {showAllEans ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          {showAllEans ? "Ocultar EANs" : "Mostrar mais EANs"}
+        </Button>
       </div>
 
       <div className="rounded-md border bg-card">
@@ -223,51 +239,20 @@ export const ProductsTable = memo(({ refreshTrigger }: ProductsTableProps) => {
                     EAN 3 {getSortIcon("ean3")}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean4")}>
-                  <div className="flex items-center gap-2">
-                    EAN 4 {getSortIcon("ean4")}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean5")}>
-                  <div className="flex items-center gap-2">
-                    EAN 5 {getSortIcon("ean5")}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean6")}>
-                  <div className="flex items-center gap-2">
-                    EAN 6 {getSortIcon("ean6")}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean7")}>
-                  <div className="flex items-center gap-2">
-                    EAN 7 {getSortIcon("ean7")}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean8")}>
-                  <div className="flex items-center gap-2">
-                    EAN 8 {getSortIcon("ean8")}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean9")}>
-                  <div className="flex items-center gap-2">
-                    EAN 9 {getSortIcon("ean9")}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean10")}>
-                  <div className="flex items-center gap-2">
-                    EAN 10 {getSortIcon("ean10")}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean11")}>
-                  <div className="flex items-center gap-2">
-                    EAN 11 {getSortIcon("ean11")}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean12")}>
-                  <div className="flex items-center gap-2">
-                    EAN 12 {getSortIcon("ean12")}
-                  </div>
-                </TableHead>
+                {showAllEans && (
+                  <>
+                    {([4, 5, 6, 7, 8, 9, 10, 11, 12] as const).map((eanNumber) => {
+                      const field = `ean${eanNumber}` as SortField;
+                      return (
+                        <TableHead key={field} className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort(field)}>
+                          <div className="flex items-center gap-2">
+                            EAN {eanNumber} {getSortIcon(field)}
+                          </div>
+                        </TableHead>
+                      );
+                    })}
+                  </>
+                )}
                 <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("lote")}>
                   <div className="flex items-center gap-2">
                     LOTE {getSortIcon("lote")}
@@ -298,19 +283,19 @@ export const ProductsTable = memo(({ refreshTrigger }: ProductsTableProps) => {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={23} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={showAllEans ? 23 : 14} className="text-center py-12 text-muted-foreground">
                     Carregando produtos...
                   </TableCell>
                 </TableRow>
               ) : paginatedProducts.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={23} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={showAllEans ? 23 : 14} className="text-center py-12 text-muted-foreground">
                     Nenhum produto cadastrado. Utilize o botão "Importar cadastro" para começar.
                   </TableCell>
                 </TableRow>
               ) : (
                 paginatedProducts.map((product) => (
-                  <ProductRow key={product.id} product={product} />
+                  <ProductRow key={product.id} product={product} showAllEans={showAllEans} />
                 ))
               )}
             </TableBody>

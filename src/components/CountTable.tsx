@@ -1,7 +1,18 @@
 import { useState, useEffect, useMemo, useCallback, memo } from "react";
+import * as XLSX from "xlsx";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Search, Plus, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Download, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import {
   Table,
@@ -11,20 +22,26 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { getAllCounts, Count, updateCountsByProduct, getProductByEan, addCounts, deleteCountsByProduct, getAllProducts } from "@/lib/indexedDB";
+import { getAllCounts, Count, Product, updateCountsByProduct, getProductByEan, addCounts, deleteCountsByProduct, getAllProducts } from "@/lib/indexedDB";
 import { useToast } from "@/hooks/use-toast";
 import { useDebounce } from "@/hooks/use-debounce";
+import logoDrogaria from "@/assets/logo-drogaria-campea.png";
 
 type SortField = keyof GroupedCount;
 type SortDirection = "asc" | "desc" | null;
 
 interface GroupedCount {
+  groupKey: string;
   produto: string;
-  eans: string[];
+  ean1: string;
   descricao: string;
+  codLocalizador: string;
   quantidadeEscaneada: number;
   quantidadeAjustada: number;
-  secao: string;
+  lote: string;
+  validade: string;
+  codigoLv: string;
+  descricaoLocalizador: string;
   coletor: string;
   inventariador: string;
   controlado: string;
@@ -34,6 +51,8 @@ interface CountTableProps {
   refreshTrigger?: number;
   onUpdate?: () => void;
 }
+
+type EnrichedCount = Count & { controlado: string };
 
 const PAGE_SIZE = 50;
 
@@ -51,21 +70,26 @@ const CountRow = memo(({
   group: GroupedCount;
   editingProduct: string | null;
   tempAdjustedQty: string;
-  onEdit: (produto: string, qty: number) => void;
-  onSave: (produto: string) => void;
+  onEdit: (groupKey: string, qty: number) => void;
+  onSave: (groupKey: string) => void;
   onCancel: () => void;
-  onDelete: (produto: string) => void;
+  onDelete: (group: GroupedCount) => void;
   onTempQtyChange: (value: string) => void;
 }) => (
   <TableRow>
+    <TableCell>
+      <div>{group.codLocalizador || "-"}</div>
+      <div className="text-xs text-muted-foreground">
+        {group.descricaoLocalizador || "-"}
+      </div>
+    </TableCell>
+    <TableCell>{group.codigoLv || "-"}</TableCell>
     <TableCell>{group.produto}</TableCell>
-    <TableCell>{group.eans[0] || ""}</TableCell>
-    <TableCell>{group.eans[1] || ""}</TableCell>
-    <TableCell>{group.eans[2] || ""}</TableCell>
+    <TableCell>{group.ean1}</TableCell>
     <TableCell>{group.descricao}</TableCell>
     <TableCell>{group.quantidadeEscaneada}</TableCell>
     <TableCell>
-      {editingProduct === group.produto ? (
+      {editingProduct === group.groupKey ? (
         <div className="flex gap-2">
           <Input
             type="number"
@@ -74,11 +98,11 @@ const CountRow = memo(({
             className="w-20"
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === "Enter") onSave(group.produto);
+              if (e.key === "Enter") onSave(group.groupKey);
               if (e.key === "Escape") onCancel();
             }}
           />
-          <Button size="sm" onClick={() => onSave(group.produto)}>
+          <Button size="sm" onClick={() => onSave(group.groupKey)}>
             ✓
           </Button>
           <Button size="sm" variant="outline" onClick={onCancel}>
@@ -88,20 +112,21 @@ const CountRow = memo(({
       ) : (
         <div 
           className="cursor-pointer hover:bg-muted/50 px-2 py-1 rounded"
-          onClick={() => onEdit(group.produto, group.quantidadeAjustada)}
+          onClick={() => onEdit(group.groupKey, group.quantidadeAjustada)}
         >
           {group.quantidadeAjustada}
         </div>
       )}
     </TableCell>
-    <TableCell>{group.secao}</TableCell>
+    <TableCell>{group.lote || "-"}</TableCell>
+    <TableCell>{group.validade || "-"}</TableCell>
     <TableCell>{group.coletor}</TableCell>
     <TableCell>{group.inventariador}</TableCell>
     <TableCell>
       <Button
         size="sm"
         variant="destructive"
-        onClick={() => onDelete(group.produto)}
+        onClick={() => onDelete(group)}
       >
         <Trash2 className="w-4 h-4" />
       </Button>
@@ -115,15 +140,20 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
   const [searchTerm, setSearchTerm] = useState("");
   const [eanSearch, setEanSearch] = useState("");
   const [qtdSearch, setQtdSearch] = useState("");
+  const [codLocalizadorSearch, setCodLocalizadorSearch] = useState("");
+  const [loteSearch, setLoteSearch] = useState("");
+  const [validadeSearch, setValidadeSearch] = useState("");
+  const [codigoLvSearch, setCodigoLvSearch] = useState("");
   const [showControlled, setShowControlled] = useState(false);
   const [showNotRegistered, setShowNotRegistered] = useState(false);
-  const [counts, setCounts] = useState<Count[]>([]);
+  const [counts, setCounts] = useState<EnrichedCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
   const [tempAdjustedQty, setTempAdjustedQty] = useState<string>("");
   const [sortField, setSortField] = useState<SortField | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pendingDeletion, setPendingDeletion] = useState<GroupedCount | null>(null);
   const { toast } = useToast();
 
   // Debounce dos termos de busca
@@ -136,16 +166,6 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
     setCurrentPage(1);
   }, [debouncedSearchTerm, debouncedEanSearch, debouncedQtdSearch, showControlled, showNotRegistered]);
 
-  useEffect(() => {
-    loadCounts();
-  }, []);
-
-  useEffect(() => {
-    if (refreshTrigger && refreshTrigger > 0) {
-      loadCounts();
-    }
-  }, [refreshTrigger]);
-
   const loadCounts = useCallback(async () => {
     setIsLoading(true);
     const data = await getAllCounts();
@@ -154,42 +174,58 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
     const productsMap = products.reduce((acc, product) => {
       acc[product.produto] = product;
       return acc;
-    }, {} as Record<string, any>);
+    }, {} as Record<string, Product>);
     
     const enrichedCounts = data.map(count => ({
       ...count,
       controlado: count.produto ? (productsMap[count.produto]?.controlado || "") : "",
+      descricaoLocalizador: count.produto
+        ? (productsMap[count.produto]?.descricaoLocalizador || count.descricaoLocalizador || "")
+        : (count.descricaoLocalizador || ""),
     }));
     
-    setCounts(enrichedCounts as Count[]);
+    setCounts(enrichedCounts);
     setIsLoading(false);
   }, []);
+
+  useEffect(() => {
+    loadCounts();
+  }, [loadCounts]);
+
+  useEffect(() => {
+    if (refreshTrigger && refreshTrigger > 0) {
+      loadCounts();
+    }
+  }, [refreshTrigger, loadCounts]);
 
   // Agrupamento memoizado
   const groupedCounts = useMemo(() => {
     const grouped = counts.reduce((acc, count) => {
       const produto = count.produto || "N/A";
+      const lote = count.lote?.trim() || "";
+      const groupKey = `${produto}\u0000${lote}`;
       
-      if (!acc[produto]) {
-        acc[produto] = {
+      if (!acc[groupKey]) {
+        acc[groupKey] = {
+          groupKey,
           produto,
-          eans: [],
+          ean1: count.ean || "",
           descricao: count.descricao || "",
+          codLocalizador: count.codLocalizador || "",
           quantidadeEscaneada: 0,
           quantidadeAjustada: 0,
-          secao: count.secao || "",
+          lote,
+          validade: count.validade || "",
+          codigoLv: count.codigoLv || "",
+          descricaoLocalizador: count.descricaoLocalizador || "",
           coletor: count.coletor || "",
           inventariador: count.inventariador || "",
-          controlado: (count as any).controlado || "",
+          controlado: count.controlado || "",
         };
       }
       
-      if (count.ean && !acc[produto].eans.includes(count.ean)) {
-        acc[produto].eans.push(count.ean);
-      }
-      
-      acc[produto].quantidadeEscaneada += parseInt(count.quantidade) || 0;
-      acc[produto].quantidadeAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
+      acc[groupKey].quantidadeEscaneada += parseInt(count.quantidade) || 0;
+      acc[groupKey].quantidadeAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
       
       return acc;
     }, {} as Record<string, GroupedCount>);
@@ -203,12 +239,17 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
       const search = debouncedSearchTerm.toLowerCase();
       const matchesSearch =
         group.produto?.toLowerCase().includes(search) ||
-        group.eans.some(ean => ean?.toLowerCase().includes(search)) ||
+        group.ean1?.toLowerCase().includes(search) ||
         group.descricao?.toLowerCase().includes(search) ||
+        group.codLocalizador?.toLowerCase().includes(search) ||
+        group.lote?.toLowerCase().includes(search) ||
+        group.validade?.toLowerCase().includes(search) ||
+        group.codigoLv?.toLowerCase().includes(search) ||
+        group.descricaoLocalizador?.toLowerCase().includes(search) ||
         group.coletor?.toLowerCase().includes(search) ||
         group.inventariador?.toLowerCase().includes(search);
 
-      const matchesEan = !debouncedEanSearch || group.eans.some(ean => ean?.includes(debouncedEanSearch));
+      const matchesEan = !debouncedEanSearch || group.ean1?.includes(debouncedEanSearch);
       const matchesQtd = !debouncedQtdSearch || 
         group.quantidadeEscaneada.toString().includes(debouncedQtdSearch) ||
         group.quantidadeAjustada.toString().includes(debouncedQtdSearch);
@@ -262,13 +303,6 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
         return sortDirection === "asc" ? comparison : -comparison;
       }
       
-      if (sortField === "eans") {
-        const aStr = (aValue as string[]).join(",");
-        const bStr = (bValue as string[]).join(",");
-        const comparison = aStr.localeCompare(bStr);
-        return sortDirection === "asc" ? comparison : -comparison;
-      }
-      
       const comparison = (aValue || "").toString().localeCompare((bValue || "").toString(), undefined, { numeric: true });
       return sortDirection === "asc" ? comparison : -comparison;
     });
@@ -285,14 +319,16 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   }, [totalPages]);
 
-  const handleAdjustedQtyEdit = useCallback((produto: string, currentQty: number) => {
-    setEditingProduct(produto);
+  const handleAdjustedQtyEdit = useCallback((groupKey: string, currentQty: number) => {
+    setEditingProduct(groupKey);
     setTempAdjustedQty(currentQty.toString());
   }, []);
 
-  const handleAdjustedQtySave = useCallback(async (produto: string) => {
+  const handleAdjustedQtySave = useCallback(async (groupKey: string) => {
     try {
-      await updateCountsByProduct(produto, tempAdjustedQty);
+      const group = groupedCounts.find((item) => item.groupKey === groupKey);
+      if (!group) return;
+      await updateCountsByProduct(group.produto, tempAdjustedQty, group.lote);
       await loadCounts();
       setEditingProduct(null);
       onUpdate?.();
@@ -307,7 +343,7 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
         variant: "destructive",
       });
     }
-  }, [tempAdjustedQty, loadCounts, onUpdate, toast]);
+  }, [groupedCounts, tempAdjustedQty, loadCounts, onUpdate, toast]);
 
   const handleAdjustedQtyCancel = useCallback(() => {
     setEditingProduct(null);
@@ -337,10 +373,15 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
       }
 
       const newCount: Count = {
-        ean: eanSearch,
+        codLocalizador: codLocalizadorSearch,
+        ean: product.ean1 || eanSearch,
         quantidade: qtdSearch,
         quantidadeAjustada: qtdSearch,
-        secao: "MAN01",
+        lote: loteSearch,
+        validade: validadeSearch,
+        codigoLv: codigoLvSearch,
+        descricaoLocalizador: product.descricaoLocalizador || "",
+        secao: product.descricaoLocalizador || "",
         coletor: "MANUAL",
         inventariador: "MANUAL",
         produto: product.produto,
@@ -349,9 +390,14 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
 
       await addCounts([newCount]);
       await loadCounts();
+      onUpdate?.();
       
       setEanSearch("");
       setQtdSearch("");
+      setCodLocalizadorSearch("");
+      setLoteSearch("");
+      setValidadeSearch("");
+      setCodigoLvSearch("");
       
       toast({
         title: "Item adicionado",
@@ -364,19 +410,16 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
         variant: "destructive",
       });
     }
-  }, [eanSearch, qtdSearch, loadCounts, toast]);
+  }, [codLocalizadorSearch, eanSearch, qtdSearch, loteSearch, validadeSearch, codigoLvSearch, loadCounts, onUpdate, toast]);
 
-  const handleDeleteProduct = useCallback(async (produto: string) => {
-    if (!confirm(`Deseja realmente excluir todas as contagens do produto ${produto}?`)) {
-      return;
-    }
-
+  const handleDeleteProduct = useCallback(async (group: GroupedCount) => {
     try {
-      await deleteCountsByProduct(produto);
+      await deleteCountsByProduct(group.produto, group.lote);
       await loadCounts();
+      onUpdate?.();
       toast({
-        title: "Produto excluído",
-        description: "Todas as contagens do produto foram removidas.",
+        title: "CD DROGARIAS CAMPEÃ — Produto excluído",
+        description: "As contagens deste produto e lote foram removidas.",
       });
     } catch (error) {
       toast({
@@ -384,8 +427,10 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
         description: "Não foi possível excluir o produto.",
         variant: "destructive",
       });
+    } finally {
+      setPendingDeletion(null);
     }
-  }, [loadCounts, toast]);
+  }, [loadCounts, onUpdate, toast]);
 
   const handleExportTxt = useCallback(() => {
     if (sortedGroupedCounts.length === 0) {
@@ -399,9 +444,14 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
 
     const txtContent = sortedGroupedCounts
       .map((group) => {
-        const ean = group.eans[0] || "";
-        const secao = group.secao || "";
-        return `${ean};${group.quantidadeAjustada};${secao}`;
+        return [
+          group.codLocalizador,
+          group.ean1,
+          group.quantidadeAjustada,
+          group.lote,
+          group.validade,
+          group.codigoLv,
+        ].join(";");
       })
       .join("\n");
 
@@ -433,9 +483,14 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
 
     const txtContent = sortedGroupedCounts
       .map((group) => {
-        const ean = group.eans[0] || "";
-        const secao = group.secao || "";
-        return `${ean},${group.quantidadeAjustada},${secao}`;
+        return [
+          group.codLocalizador,
+          group.ean1,
+          group.quantidadeAjustada,
+          group.lote,
+          group.validade,
+          group.codigoLv,
+        ].join(",");
       })
       .join("\n");
 
@@ -455,13 +510,59 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
     });
   }, [sortedGroupedCounts, toast]);
 
+  const handleExportExcel = useCallback(() => {
+    if (sortedGroupedCounts.length === 0) {
+      toast({
+        title: "Sem dados",
+        description: "Não há contagens para exportar.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const rows = sortedGroupedCounts.map((group) => ({
+      LOCALIZADOR: group.codLocalizador,
+      "DESCRIÇÃO LOCALIZADOR": group.descricaoLocalizador,
+      "CÓDIGO LV": group.codigoLv,
+      PRODUTO: group.produto,
+      "EAN 1": group.ean1,
+      "DESCRIÇÃO": group.descricao,
+      "QUANTIDADE ESCANEADA": group.quantidadeEscaneada,
+      "QUANTIDADE AJUSTADA": group.quantidadeAjustada,
+      LOTE: group.lote,
+      VALIDADE: group.validade,
+      COLETOR: group.coletor,
+      INVENTARIADOR: group.inventariador,
+      CONTROLADO: group.controlado,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet["!cols"] = [
+      { wch: 18 }, { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 18 },
+      { wch: 40 }, { wch: 22 }, { wch: 21 }, { wch: 18 }, { wch: 16 },
+      { wch: 12 }, { wch: 24 }, { wch: 12 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Contagem");
+    XLSX.writeFile(
+      workbook,
+      `contagem_filtrada_${new Date().toISOString().split("T")[0]}.xlsx`
+    );
+
+    toast({
+      title: "Planilha exportada",
+      description: `${rows.length} registros foram exportados para Excel.`,
+    });
+  }, [sortedGroupedCounts, toast]);
+
   const handleTempQtyChange = useCallback((value: string) => {
     setTempAdjustedQty(value);
   }, []);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
+      <div className="flex flex-col md:flex-row gap-4 md:items-center md:justify-between">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
           <Input
@@ -472,50 +573,7 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
             className="pl-10"
           />
         </div>
-        
-        <Input
-          type="text"
-          placeholder="EAN"
-          value={eanSearch}
-          onChange={(e) => setEanSearch(e.target.value)}
-          className="w-full md:w-40"
-        />
-        
-        <Input
-          type="text"
-          placeholder="Qtd"
-          value={qtdSearch}
-          onChange={(e) => setQtdSearch(e.target.value)}
-          className="w-full md:w-24"
-        />
-        
-        <Button 
-          onClick={handleAddCount}
-          className="bg-success-green hover:bg-success-green/90 text-success-green-foreground w-full md:w-auto"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Adicionar
-        </Button>
-
-        <Button 
-          onClick={handleExportTxt}
-          variant="outline"
-          className="w-full md:w-auto"
-        >
-          <Download className="w-4 h-4 mr-2" />
-          Exportar TXT (;)
-        </Button>
-
-        <Button 
-          onClick={handleExportTxtComma}
-          variant="outline"
-          className="w-full md:w-auto"
-        >
-          <Download className="w-4 h-4 mr-2" />
-          Exportar TXT (,)
-        </Button>
-        
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex items-center gap-2">
             <Checkbox
               id="show-controlled"
@@ -540,8 +598,74 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
               htmlFor="show-not-registered"
               className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
             >
-              Mostrar não cadastrados
+              MOSTRAR SOMENTE NÃO CADASTRADOS
             </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border bg-card p-4 space-y-3">
+        <h3 className="font-semibold">Inserção manual</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <Input
+            type="text"
+            placeholder="Código localizador"
+            value={codLocalizadorSearch}
+            onChange={(e) => setCodLocalizadorSearch(e.target.value)}
+          />
+          <Input
+            type="text"
+            placeholder="EAN *"
+            value={eanSearch}
+            onChange={(e) => setEanSearch(e.target.value)}
+          />
+          <Input
+            type="number"
+            placeholder="Quantidade *"
+            value={qtdSearch}
+            onChange={(e) => setQtdSearch(e.target.value)}
+          />
+          <Input
+            type="text"
+            placeholder="Lote"
+            value={loteSearch}
+            onChange={(e) => setLoteSearch(e.target.value)}
+          />
+          <Input
+            type="text"
+            placeholder="Validade"
+            value={validadeSearch}
+            onChange={(e) => setValidadeSearch(e.target.value)}
+          />
+          <Input
+            type="text"
+            placeholder="Código LV"
+            value={codigoLvSearch}
+            onChange={(e) => setCodigoLvSearch(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3 sm:justify-between">
+          <p className="text-xs text-muted-foreground">* Campos obrigatórios. O EAN é comparado com os 12 EANs do cadastro.</p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button
+              onClick={handleAddCount}
+              className="bg-success-green hover:bg-success-green/90 text-success-green-foreground"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Adicionar
+            </Button>
+            <Button onClick={handleExportTxt} variant="outline">
+              <Download className="w-4 h-4 mr-2" />
+              Exportar TXT (;)
+            </Button>
+            <Button onClick={handleExportTxtComma} variant="outline">
+              <Download className="w-4 h-4 mr-2" />
+              Exportar TXT (,)
+            </Button>
+            <Button onClick={handleExportExcel} variant="outline">
+              <Download className="w-4 h-4 mr-2" />
+              Exportar Excel
+            </Button>
           </div>
         </div>
       </div>
@@ -551,14 +675,26 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("codLocalizador")}>
+                  <div className="flex items-center gap-2">
+                    LOCALIZADOR {getSortIcon("codLocalizador")}
+                  </div>
+                </TableHead>
+                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("codigoLv")}>
+                  <div className="flex items-center gap-2">
+                    CÓDIGO LV {getSortIcon("codigoLv")}
+                  </div>
+                </TableHead>
                 <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("produto")}>
                   <div className="flex items-center gap-2">
                     PRODUTO {getSortIcon("produto")}
                   </div>
                 </TableHead>
-                <TableHead>EAN 1</TableHead>
-                <TableHead>EAN 2</TableHead>
-                <TableHead>EAN 3</TableHead>
+                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("ean1")}>
+                  <div className="flex items-center gap-2">
+                    EAN 1 {getSortIcon("ean1")}
+                  </div>
+                </TableHead>
                 <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("descricao")}>
                   <div className="flex items-center gap-2">
                     DESCRIÇÃO {getSortIcon("descricao")}
@@ -574,9 +710,14 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
                     QUANTIDADE AJUSTADA {getSortIcon("quantidadeAjustada")}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("secao")}>
+                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("lote")}>
                   <div className="flex items-center gap-2">
-                    SEÇÃO {getSortIcon("secao")}
+                    LOTE {getSortIcon("lote")}
+                  </div>
+                </TableHead>
+                <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("validade")}>
+                  <div className="flex items-center gap-2">
+                    VALIDADE {getSortIcon("validade")}
                   </div>
                 </TableHead>
                 <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => handleSort("coletor")}>
@@ -595,27 +736,27 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={12} className="text-center py-12 text-muted-foreground">
                     Carregando contagens...
                   </TableCell>
                 </TableRow>
               ) : paginatedCounts.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={12} className="text-center py-12 text-muted-foreground">
                     Nenhuma contagem registrada. Utilize o botão "Importar contagem" para adicionar dados.
                   </TableCell>
                 </TableRow>
               ) : (
                 paginatedCounts.map((group) => (
                   <CountRow
-                    key={group.produto}
+                    key={group.groupKey}
                     group={group}
                     editingProduct={editingProduct}
                     tempAdjustedQty={tempAdjustedQty}
                     onEdit={handleAdjustedQtyEdit}
                     onSave={handleAdjustedQtySave}
                     onCancel={handleAdjustedQtyCancel}
-                    onDelete={handleDeleteProduct}
+                    onDelete={setPendingDeletion}
                     onTempQtyChange={handleTempQtyChange}
                   />
                 ))
@@ -670,6 +811,65 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
           </div>
         )}
       </div>
+
+      <AlertDialog
+        open={pendingDeletion !== null}
+        onOpenChange={(open) => !open && setPendingDeletion(null)}
+      >
+        <AlertDialogContent className="max-w-xl">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-3 border-b pb-4">
+              <img
+                src={logoDrogaria}
+                alt="Logo CD Drogarias Campeã"
+                className="h-12 w-auto"
+              />
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">CONFIRMAÇÃO DE EXCLUSÃO</p>
+                <AlertDialogTitle>CD DROGARIAS CAMPEÃ</AlertDialogTitle>
+              </div>
+            </div>
+            <AlertDialogDescription className="pt-2">
+              Deseja realmente excluir as contagens deste produto e lote?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {pendingDeletion && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border bg-muted/30 p-4 text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground">PRODUTO</p>
+                <p className="font-medium">{pendingDeletion.produto || "-"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">EAN</p>
+                <p className="font-medium">{pendingDeletion.ean1 || "-"}</p>
+              </div>
+              <div className="sm:col-span-2">
+                <p className="text-xs text-muted-foreground">DESCRIÇÃO</p>
+                <p className="font-medium">{pendingDeletion.descricao || "-"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">LOTE</p>
+                <p className="font-medium">{pendingDeletion.lote || "-"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">VALIDADE</p>
+                <p className="font-medium">{pendingDeletion.validade || "-"}</p>
+              </div>
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => pendingDeletion && handleDeleteProduct(pendingDeletion)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir contagens
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 });

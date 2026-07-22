@@ -94,12 +94,21 @@ export function useStatsWorker() {
             return sum + (parseInt(c.quantidadeAjustada || c.quantidade) || 0);
           }, 0);
 
-          const countsByProduct = counts.reduce((acc, count) => {
+          function normalizeLot(lot) {
+            return lot ? String(lot).trim().toUpperCase() : "";
+          }
+
+          function lotKey(produto, lot) {
+            return produto + "::LOT::" + normalizeLot(lot);
+          }
+
+          const countsByLot = counts.reduce((acc, count) => {
             const produto = count.produto || "N/A";
-            if (!acc[produto]) {
-              acc[produto] = { quantidadeAjustada: 0 };
+            const key = lotKey(produto, count.lote);
+            if (!acc[key]) {
+              acc[key] = { produto, lote: count.lote || "", quantidadeAjustada: 0 };
             }
-            acc[produto].quantidadeAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
+            acc[key].quantidadeAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
             return acc;
           }, {});
 
@@ -107,76 +116,65 @@ export function useStatsWorker() {
           let positiveSum = 0;
           let negativeSum = 0;
 
+          const handledCountKeys = new Set();
+          const handledProductsWithoutLot = new Set();
+
+          function applyDifference(product, expected, counted) {
+            const difference = counted - expected;
+            if (difference === 0) return;
+            discCount++;
+            const value = parseBRNumber(product.custoGerencial) * difference;
+            if (value > 0) positiveSum += value;
+            else negativeSum += value;
+          }
+
           for (const product of products) {
-            let countData = countsByProduct[product.produto];
-            
-            if (!countData) {
-              const eans = [
-                product.ean1, product.ean2, product.ean3, product.ean4,
-                product.ean5, product.ean6, product.ean7, product.ean8,
-                product.ean9, product.ean10, product.ean11, product.ean12
-              ].filter(Boolean);
-              
-              for (const ean of eans) {
-                if (countsByProduct[ean]) {
-                  countData = countsByProduct[ean];
-                  break;
-                }
-              }
-            }
-            
-            if (countData) {
-              const qtdeLoja = parseBRNumber(product.saldo);
-              const qtdeAjustada = countData.quantidadeAjustada;
-              const qtdeDivergente = qtdeAjustada - qtdeLoja;
-              
-              if (qtdeDivergente !== 0) {
-                discCount++;
-                const custo = parseBRNumber(product.custoGerencial);
-                const valorDiferenca = custo * qtdeDivergente;
-                
-                if (valorDiferenca > 0) {
-                  positiveSum += valorDiferenca;
-                } else {
-                  negativeSum += valorDiferenca;
-                }
-              }
+            const productLot = normalizeLot(product.lote);
+            const expected = parseBRNumber(product.saldo);
+            if (productLot) {
+              const key = lotKey(product.produto, productLot);
+              const countData = countsByLot[key];
+              if (countData) handledCountKeys.add(key);
+              applyDifference(product, expected, countData ? countData.quantidadeAjustada : 0);
             } else {
-              const qtdeLoja = parseBRNumber(product.saldo);
-              if (qtdeLoja !== 0) {
-                discCount++;
-                const custo = parseBRNumber(product.custoGerencial);
-                const qtdeDivergente = 0 - qtdeLoja;
-                const valorDiferenca = custo * qtdeDivergente;
-                
-                if (valorDiferenca > 0) {
-                  positiveSum += valorDiferenca;
-                } else {
-                  negativeSum += valorDiferenca;
-                }
-              }
+              if (handledProductsWithoutLot.has(product.produto)) continue;
+              handledProductsWithoutLot.add(product.produto);
+              const productCounts = Object.entries(countsByLot)
+                .filter((entry) => entry[1].produto === product.produto);
+              productCounts.forEach((entry) => handledCountKeys.add(entry[0]));
+              const counted = productCounts.reduce((sum, entry) => sum + entry[1].quantidadeAjustada, 0);
+              applyDifference(product, expected, counted);
             }
           }
+
+          Object.entries(countsByLot).forEach((entry) => {
+            const key = entry[0];
+            const countData = entry[1];
+            if (handledCountKeys.has(key)) return;
+            const product = products.find((item) => item.produto === countData.produto);
+            if (product) applyDifference(product, 0, countData.quantidadeAjustada);
+          });
 
           const errorsByInventorMap = {};
           let notRegistered = 0;
           let manualInserts = 0;
 
-          // Primeiro, agrupar contagens por produto para calcular ajustes corretamente
+          // Agrupar ajustes por produto e lote para não misturar referências diferentes.
           const countsByProductForAdjust = {};
           counts.forEach((count) => {
             const produto = count.produto || "N/A";
-            if (!countsByProductForAdjust[produto]) {
-              countsByProductForAdjust[produto] = {
+            const adjustmentKey = lotKey(produto, count.lote);
+            if (!countsByProductForAdjust[adjustmentKey]) {
+              countsByProductForAdjust[adjustmentKey] = {
                 totalEscaneada: 0,
                 totalAjustada: 0,
                 inventariadores: new Set()
               };
             }
-            countsByProductForAdjust[produto].totalEscaneada += parseInt(count.quantidade) || 0;
-            countsByProductForAdjust[produto].totalAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
+            countsByProductForAdjust[adjustmentKey].totalEscaneada += parseInt(count.quantidade) || 0;
+            countsByProductForAdjust[adjustmentKey].totalAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
             if (count.inventariador) {
-              countsByProductForAdjust[produto].inventariadores.add(count.inventariador);
+              countsByProductForAdjust[adjustmentKey].inventariadores.add(count.inventariador);
             }
 
             if (count.descricao === "Produto não cadastrado") {
@@ -193,12 +191,12 @@ export function useStatsWorker() {
           let adjustedProductsCount = 0;
           const adjustedSkusSet = new Set();
 
-          Object.entries(countsByProductForAdjust).forEach(([produto, data]) => {
+          Object.entries(countsByProductForAdjust).forEach(([adjustmentKey, data]) => {
             const difference = Math.abs(data.totalAjustada - data.totalEscaneada);
             
             if (difference > 0) {
               // Produto foi ajustado
-              adjustedSkusSet.add(produto);
+              adjustedSkusSet.add(adjustmentKey);
               adjustedProductsCount++;
               totalAdjustedQty += data.totalAjustada; // Total ajustado (não a diferença)
               

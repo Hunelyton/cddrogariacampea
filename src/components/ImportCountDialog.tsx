@@ -73,30 +73,35 @@ export const ImportCountDialog = ({
       const separator = line.includes(";") ? ";" : ",";
       const parts = line.split(separator).map((p) => p.trim());
 
-      if (parts.length >= 2) {
-        const codigoLido = parts[0]; // Pode ser EAN ou código do produto
-        const quantidade = parts[1];
-        const secao = parts[2] || "";
+      if (parts.length >= 3) {
+        const codLocalizador = parts[0] || "";
+        const eanLido = parts[1] || "";
+        const quantidade = parts[2] || "";
+        const lote = parts[3] || "";
+        const validade = parts[4] || "";
+        const codigoLv = parts[5] || "";
 
-        // Buscar produto primeiro pelo EAN
-        let product = products.find((p) =>
+        // O EAN lido pode corresponder a qualquer um dos 12 EANs do cadastro.
+        const product = products.find((p) =>
           [p.ean1, p.ean2, p.ean3, p.ean4, p.ean5, p.ean6, p.ean7, p.ean8, p.ean9, p.ean10, p.ean11, p.ean12]
-            .some((productEan) => productEan === codigoLido)
+            .some((productEan) => productEan && productEan === eanLido)
         );
 
-        // Se não encontrou pelo EAN, tentar buscar pelo código do produto
-        if (!product) {
-          product = products.find((p) => p.produto === codigoLido);
-        }
+        const codigoNaoCadastrado = eanLido || codLocalizador || codigoLv;
 
         counts.push({
-          ean: product?.ean1 || codigoLido, // Usar EAN1 do produto se encontrado, senão usar código lido
+          codLocalizador,
+          ean: product?.ean1 || eanLido,
           quantidade,
           quantidadeAjustada: quantidade,
-          secao,
+          lote,
+          validade,
+          codigoLv,
+          descricaoLocalizador: product?.descricaoLocalizador || "",
+          secao: product?.descricaoLocalizador || "",
           coletor: fileData.coletor,
           inventariador: fileData.inventariador,
-          produto: product?.produto || codigoLido, // Usar código do produto se encontrado, senão usar código lido
+          produto: product?.produto || codigoNaoCadastrado,
           descricao: product?.descricao1 || "Produto não cadastrado",
         });
       }
@@ -152,7 +157,7 @@ export const ImportCountDialog = ({
         <DialogHeader>
           <DialogTitle>Importar Contagem</DialogTitle>
           <DialogDescription>
-            Selecione arquivos TXT com o formato: ean,quantidade,seção ou ean;quantidade;seção
+            Formato: CÓDIGO LOCALIZADOR, EAN, QTDE, LOTE, VALIDADE, CÓDIGO LV (separado por vírgula ou ponto e vírgula)
           </DialogDescription>
         </DialogHeader>
 
@@ -210,7 +215,7 @@ export const ImportCountDialog = ({
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {Array.from({ length: 10 }, (_, i) => (
+                          {Array.from({ length: 30 }, (_, i) => (
                             <SelectItem key={i} value={`C${i + 1}`}>
                               C{i + 1}
                             </SelectItem>

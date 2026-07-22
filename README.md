@@ -190,41 +190,50 @@ O dashboard apresenta nove cards:
 ### Aba Cadastro de Produtos
 
 - busca por código do produto, descrição ou qualquer EAN;
-- tabela horizontal com as 23 colunas importadas;
+- tabela horizontal com os principais campos importados;
+- exibe inicialmente EAN 1, EAN 2 e EAN 3; o botão **Mostrar mais EANs** revela EAN 4 a EAN 12 e permite ocultá-los novamente;
 - ordenação crescente, decrescente e sem ordenação ao clicar nos cabeçalhos;
 - paginação de 50 produtos;
 - mensagem de orientação quando não há cadastro.
 
 ### Aba Contagem
 
-- pesquisa geral por produto, EAN, descrição, coletor ou inventariador;
-- campos rápidos de EAN e quantidade para inclusão manual;
-- filtros **Mostrar controlados** e **Mostrar não cadastrados**;
-- agrupamento de todas as leituras pelo código do produto;
-- exibição dos três primeiros EANs encontrados no grupo;
+- pesquisa geral por produto, EAN, descrição, código localizador, lote, validade, código LV, coletor ou inventariador;
+- formulário de inclusão manual com código localizador, EAN, quantidade, lote, validade e código LV;
+- filtros **Mostrar controlados** e **MOSTRAR SOMENTE NÃO CADASTRADOS**; ao ativar o segundo, apenas contagens sem cadastro são exibidas;
+- agrupamento das leituras pela combinação de produto e lote, sem unir lotes diferentes;
+- exibição apenas do EAN 1 normalizado do cadastro;
+- exibição de código localizador, lote, validade e código LV recebidos na contagem;
+- a descrição do localizador é preenchida pelo cadastro e exibida abaixo do código localizador, na mesma célula;
+- a tabela inicia pelas colunas Localizador, Código LV, Produto, EAN 1 e Descrição;
+- código localizador, lote e validade vazios são apresentados como `-`, sem alterar o valor armazenado ou exportado;
 - soma da quantidade escaneada e da quantidade ajustada;
 - edição inline da quantidade ajustada, com Enter para salvar e Escape para cancelar;
-- exclusão de todas as leituras de um produto, após confirmação;
+- exclusão das leituras de um produto e lote, após confirmação;
+- a confirmação de exclusão apresenta logo, nome da empresa, produto, EAN, descrição, lote e validade;
 - exportação TXT com ponto e vírgula ou vírgula;
+- exportação Excel com todos os campos, respeitando os filtros e a ordenação selecionados;
 - ordenação por cabeçalho e paginação de 50 grupos.
 
 Inclusões manuais recebem automaticamente:
 
-- seção `MAN01`;
+- descrição do localizador obtida do cadastro;
 - coletor `MANUAL`;
 - inventariador `MANUAL`.
 
 A inclusão manual exige que o EAN exista no cadastro.
+O EAN informado pode corresponder a qualquer um dos 12 EANs do produto; a tela armazena e apresenta o EAN 1 do cadastro.
 
 ### Aba Divergências
 
 - calcula divergências usando cadastro e contagens ajustadas;
-- pesquisa por produto, EAN, descrição, seção, coletor ou inventariador;
-- filtros de controlados e não cadastrados;
+- pesquisa por localizador, descrição do localizador, código LV, produto, EAN, descrição, lote, validade, coletor ou inventariador;
+- exibe localizador, descrição do localizador, código LV, lote e validade junto dos dados financeiros e quantitativos;
+- produtos não cadastrados ficam ocultos por padrão; ao marcar **Mostrar não cadastrados**, a tabela passa a exibir exclusivamente esses itens;
 - valores positivos em verde e negativos em vermelho;
 - ordenação por qualquer coluna visível;
 - paginação de 50 registros;
-- exportação do conjunto filtrado e ordenado para PDF.
+- exportação do conjunto filtrado e ordenado para PDF e Excel.
 
 ### Página não encontrada
 
@@ -259,31 +268,31 @@ Se todos os EANs estiverem vazios, o importador copia o código de `PRODUTO` par
 
 ### Contagem TXT
 
-O modal aceita vários arquivos `.txt`. Cada arquivo recebe um coletor entre `C1` e `C10` e exige o nome do inventariador.
+O modal aceita vários arquivos `.txt`. Cada arquivo recebe um coletor entre `C1` e `C30` e exige o nome do inventariador.
 
 Formatos aceitos:
 
 ```text
-EAN;QUANTIDADE;SECAO
-7891234567890;8;A01
+LOC-001;7891234567890;8;LT-2026;12/2027;LV-001
 ```
 
 ou:
 
 ```text
-EAN,QUANTIDADE,SECAO
-7891234567890,8,A01
+LOC-001,7891234567890,8,LT-2026,12/2027,LV-001
 ```
 
 Regras do parser:
 
 - detecta `;` ou `,` em cada linha;
 - ignora linhas vazias;
-- exige ao menos código e quantidade;
-- considera a terceira posição, quando presente, como seção;
-- procura primeiro nos 12 EANs e depois no código do produto;
+- exige ao menos código localizador, EAN e quantidade;
+- interpreta as posições na ordem: código localizador, EAN, quantidade, lote, validade e código LV;
+- procura o EAN recebido em qualquer um dos 12 EANs do cadastro;
+- código localizador e código LV são mantidos como dados da contagem, mas não substituem o confronto pelos 12 EANs;
 - quando encontra o produto, normaliza a leitura para seu `EAN1` e código interno;
 - quando não encontra, mantém o código lido e usa a descrição `Produto não cadastrado`;
+- guarda código localizador, lote, validade e código LV junto da contagem;
 - inicia `quantidadeAjustada` com o mesmo valor de `quantidade`;
 - adiciona as contagens à base já existente em lotes de 500.
 
@@ -297,14 +306,14 @@ A associação principal é feita pelo campo `produto`. Quando necessário, o si
 
 ### Agrupamento da contagem
 
-Todas as leituras do mesmo `produto` formam um único grupo. Nesse grupo:
+Todas as leituras com o mesmo `produto` e o mesmo `lote` formam um grupo. Lotes diferentes do mesmo produto permanecem em linhas separadas. Nesse grupo:
 
 - `quantidadeEscaneada` é a soma de `quantidade`;
 - `quantidadeAjustada` é a soma de `quantidadeAjustada`, usando `quantidade` como fallback;
 - EANs repetidos são exibidos apenas uma vez;
 - seção, coletor e inventariador vêm do primeiro registro do grupo.
 
-Ao editar uma quantidade ajustada, o total informado é salvo no primeiro registro do produto e os demais registros recebem `0`. Isso preserva o total do grupo sem duplicá-lo.
+Ao editar uma quantidade ajustada, o total informado é salvo no primeiro registro da combinação produto + lote e os demais registros desse mesmo grupo recebem `0`. Isso preserva o total sem misturar lotes.
 
 ### Números brasileiros
 
@@ -326,6 +335,13 @@ diferença financeira  = divergência positiva + divergência negativa
 - resultado negativo representa falta;
 - resultado zero não aparece na tabela de divergências;
 - produto cadastrado com saldo diferente de zero e sem contagem é considerado contado como zero.
+
+O lote também participa do confronto:
+
+- quando o cadastro possui lote, somente a contagem do mesmo produto e lote é comparada ao saldo;
+- um lote contado diferente do lote cadastrado gera uma divergência própria com saldo esperado igual a zero;
+- a ausência de contagem para o lote cadastrado gera uma divergência negativa;
+- quando o produto não possui lote no cadastro, os lotes continuam separados na aba Contagem, mas suas quantidades são somadas para o confronto com o saldo do produto.
 
 ### Indicadores e ajustes
 
@@ -368,9 +384,14 @@ Modelo de contagem:
 ```ts
 interface Count {
   id?: number;
+  codLocalizador?: string;
   ean: string;
   quantidade: string;
   quantidadeAjustada?: string;
+  lote?: string;
+  validade?: string;
+  codigoLv?: string;
+  descricaoLocalizador?: string;
   secao: string;
   coletor: string;
   inventariador: string;
@@ -411,26 +432,47 @@ TTLs disponíveis: curto de 1 minuto, médio de 5 minutos e longo de 15 minutos.
 
 ### Contagem TXT
 
-- `contagem_YYYY-MM-DD.txt`: `EAN;QUANTIDADE_AJUSTADA;SECAO`;
-- `contagem_virgula_YYYY-MM-DD.txt`: `EAN,QUANTIDADE_AJUSTADA,SECAO`.
+- `contagem_YYYY-MM-DD.txt`: `CODIGO_LOCALIZADOR;EAN1;QUANTIDADE_AJUSTADA;LOTE;VALIDADE;CODIGO_LV`;
+- `contagem_virgula_YYYY-MM-DD.txt`: `CODIGO_LOCALIZADOR,EAN1,QUANTIDADE_AJUSTADA,LOTE,VALIDADE,CODIGO_LV`.
 
-A exportação respeita busca, filtros e ordenação atuais, mas exporta todos os grupos resultantes, não apenas a página visível. É usado o primeiro EAN do grupo.
+A exportação respeita busca, filtros e ordenação atuais, mas exporta todos os grupos resultantes, não apenas a página visível. É usado o EAN 1 normalizado do cadastro.
+
+### Contagem Excel
+
+- arquivo: `contagem_filtrada_YYYY-MM-DD.xlsx`;
+- aba: `Contagem`;
+- exporta todos os resultados dos filtros e da ordenação atuais, não apenas a página visível;
+- inclui localizador, descrição do localizador, código LV, produto, EAN 1, descrição, quantidades escaneada e ajustada, lote, validade, coletor, inventariador e indicação de controlado.
 
 ### PDF de divergências
 
 - arquivo: `relatorio-divergencia.pdf`;
-- papel A4 em paisagem;
+- papel A3 em paisagem para comportar todos os campos;
 - logo e título no cabeçalho;
-- tabela filtrada e ordenada;
+- tabela filtrada e ordenada com localizador, descrição do localizador, código LV, produto, EAN 1, descrição, lote, validade, coletor, inventariador, custo, quantidades e valor da diferença;
 - resumo de divergências positivas, negativas e diferença financeira;
 - dados da empresa e paginação no rodapé.
+
+### Excel de divergências
+
+- arquivo: `divergencias_filtradas_YYYY-MM-DD.xlsx`;
+- aba: `Divergências`;
+- respeita a busca, os filtros e a ordenação selecionados;
+- exporta todos os resultados filtrados, não apenas a página atual;
+- inclui todos os campos do PDF e a indicação de produto controlado.
 
 ### PDF geral
 
 - arquivo: `relatorio-geral-dashboard.pdf`;
-- inclui indicadores gerais;
-- apresenta estatísticas consolidadas por seção;
-- utiliza o cadastro e as contagens atuais;
+- papel A3 em paisagem para comportar os novos campos;
+- inclui os indicadores financeiros e de contagem do dashboard;
+- confronta cadastro e contagem por produto e lote, seguindo a mesma regra da aba de divergências;
+- apresenta um resumo operacional com leituras, grupos únicos de produto/lote, quantidades escaneada e ajustada, operadores, produtos não cadastrados, lotes esperados sem contagem e lotes inesperados;
+- inclui análise de erros por operador/inventariador com leituras, SKUs/lotes, quantidades, ajustes, não cadastrados, divergências associadas e valor líquido;
+- faltas sem nenhuma contagem não são atribuídas artificialmente a um operador;
+- lista todos os produtos não cadastrados com localizador, código LV, produto, EAN, descrição, lote, validade, quantidade, coletor e operador;
+- apresenta as 50 maiores faltas e sobras, incluindo localizador, código LV, EAN, lote, validade e quantidades;
+- utiliza o cadastro e as contagens atuais, incluindo inserções manuais e ajustes;
 - inclui identificação da empresa, logo e paginação.
 
 ## Estrutura de arquivos
@@ -553,8 +595,8 @@ São primitivas geradas/adaptadas do shadcn/ui e Radix. Não contêm regras de i
 | `buildEanCache` | Monta o mapa interno EAN → produto |
 | `getProductByEan` | Busca um produto no mapa de EANs |
 | `getProductsByEans` | Busca vários EANs de uma vez |
-| `deleteCountsByProduct` | Exclui todas as contagens de um produto |
-| `updateCountsByProduct` | Redistribui e salva o total ajustado do produto |
+| `deleteCountsByProduct` | Exclui as contagens de uma combinação produto + lote |
+| `updateCountsByProduct` | Redistribui e salva o total ajustado de uma combinação produto + lote |
 | `invalidateProductCache` | Descarta explicitamente o mapa EAN → produto |
 
 ### `src/components/ImportDialog.tsx`
@@ -605,7 +647,7 @@ São primitivas geradas/adaptadas do shadcn/ui e Radix. Não contêm regras de i
 | --- | --- |
 | `loadData` | Carrega produtos/contagens do cache ou IndexedDB |
 | `handleProductsUpdate` | Invalida caches e aciona atualização global |
-| `exportDashboardToPDF` | Consolida dados, estatísticas por seção e gera o PDF geral |
+| `exportDashboardToPDF` | Consolida produto/lote, não cadastrados, estatísticas operacionais e análise de erros por operador para gerar o PDF geral |
 | `statCards` | Memoriza a grade dos nove indicadores |
 
 ### Utilitários
@@ -652,7 +694,7 @@ Comportamento responsivo:
 - IndexedDB é a fonte persistente; o cache em memória é apenas uma otimização.
 - Importações são cumulativas. Use **Limpar dados** antes de um novo inventário quando não quiser somar dados antigos.
 - A limpeza remove todos os dados locais do aplicativo no navegador e recarrega a página.
-- O filtro “não cadastrados” da aba Divergências tende a não encontrar itens, pois a lista de divergências é construída a partir do cadastro de produtos; leituras sem cadastro aparecem na aba Contagem e nos indicadores.
+- Leituras sem produto cadastrado aparecem na Contagem e no indicador próprio; na aba Divergências ficam ocultas até o filtro **Mostrar não cadastrados** ser ativado, quando passam a ser o único conjunto exibido, com custo e valor financeiro iguais a zero.
 - O fallback sem Web Worker calcula somente a quantidade de produtos cadastrados; os demais cards podem permanecer zerados.
 - A aplicação possui dois sistemas de toast (`shadcn` e `Sonner`) por compatibilidade entre componentes.
 - `App.css` é legado e não participa do bundle enquanto não for importado.

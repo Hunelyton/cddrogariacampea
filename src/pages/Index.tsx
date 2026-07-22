@@ -7,8 +7,9 @@ import { parseBRNumber } from "@/lib/utils";
 import { dataCache, CACHE_KEYS, CACHE_TTL } from "@/lib/cache";
 import { useStatsWorker } from "@/hooks/useStatsWorker";
 import pdfMake from "pdfmake/build/pdfmake";
-// @ts-ignore
+// @ts-expect-error O pacote de fontes do pdfMake não publica uma tipagem compatível.
 import pdfFonts from "pdfmake/build/vfs_fonts";
+import type { TDocumentDefinitions } from "pdfmake/interfaces";
 import { toast } from "sonner";
 
 // Lazy load do componente de tabs para melhorar performance inicial
@@ -64,7 +65,7 @@ const Index = () => {
 
   const exportDashboardToPDF = useCallback(async () => {
     try {
-      // @ts-ignore
+      // @ts-expect-error A tipagem do build não expõe a propriedade vfs usada no navegador.
       pdfMake.vfs = pdfFonts.pdfMake ? pdfFonts.pdfMake.vfs : pdfFonts.vfs;
 
       // Load and convert logo to base64
@@ -90,182 +91,240 @@ const Index = () => {
         counts = await getAllCounts();
       }
 
-      // Agrupar contagens por produto
-      const countsByProduct = counts.reduce((acc, count) => {
-        const produto = count.produto || "N/A";
-        if (!acc[produto]) {
-          acc[produto] = {
-            quantidadeEscaneada: 0,
-            quantidadeAjustada: 0,
-            secao: count.secao || "SEM SEÇÃO",
-          };
-        }
-        acc[produto].quantidadeEscaneada += parseInt(count.quantidade) || 0;
-        acc[produto].quantidadeAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
-        return acc;
-      }, {} as Record<string, { quantidadeEscaneada: number; quantidadeAjustada: number; secao: string }>);
+      const normalizeLot = (lot?: string) => lot?.trim().toUpperCase() || "";
+      const countLotKey = (produto: string, lote?: string) => `${produto}\u0000${normalizeLot(lote)}`;
+      const isNotRegistered = (count: Count) => count.descricao === "Produto não cadastrado";
 
-      // Calcular estatísticas por seção
-      const statsBySection: Record<string, {
-        divergenciaPositiva: number;
-        divergenciaNegativa: number;
-        diferencaTotal: number;
-        itensEscaneados: number;
-        skusUnicos: Set<string>;
-      }> = {};
-
-      // Processar divergências por seção
-      for (const product of products) {
-        let countData = countsByProduct[product.produto];
-        
-        if (!countData) {
-          const eans = [
-            product.ean1, product.ean2, product.ean3, product.ean4,
-            product.ean5, product.ean6, product.ean7, product.ean8,
-            product.ean9, product.ean10, product.ean11, product.ean12
-          ].filter(Boolean);
-          
-          for (const ean of eans) {
-            if (countsByProduct[ean]) {
-              countData = countsByProduct[ean];
-              break;
-            }
-          }
-        }
-        
-        if (countData) {
-          const secao = countData.secao || "SEM SEÇÃO";
-          if (!statsBySection[secao]) {
-            statsBySection[secao] = {
-              divergenciaPositiva: 0,
-              divergenciaNegativa: 0,
-              diferencaTotal: 0,
-              itensEscaneados: 0,
-              skusUnicos: new Set()
-            };
-          }
-
-          const qtdeLoja = parseBRNumber(product.saldo);
-          const qtdeAjustada = countData.quantidadeAjustada;
-          const qtdeDivergente = qtdeAjustada - qtdeLoja;
-          
-          if (qtdeDivergente !== 0) {
-            const custo = parseBRNumber(product.custoGerencial);
-            const valorDiferenca = custo * qtdeDivergente;
-            
-            if (valorDiferenca > 0) {
-              statsBySection[secao].divergenciaPositiva += valorDiferenca;
-            } else {
-              statsBySection[secao].divergenciaNegativa += valorDiferenca;
-            }
-            statsBySection[secao].diferencaTotal += valorDiferenca;
-          }
-          
-          statsBySection[secao].itensEscaneados += countData.quantidadeAjustada;
-          statsBySection[secao].skusUnicos.add(product.produto);
-        }
+      interface CountLotGroup {
+        produto: string;
+        quantidadeEscaneada: number;
+        quantidadeAjustada: number;
+        codLocalizador: string;
+        codigoLv: string;
+        lote: string;
+        validade: string;
+        coletor: string;
+        inventariador: string;
+        descricao: string;
+        ean: string;
+        naoCadastrado: boolean;
       }
 
-      // Preparar dados das tabelas por seção
-      const sectionTableData = Object.entries(statsBySection)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([secao, sectionStats]) => [
-          { text: secao, fontSize: 9 },
-          { text: `R$ ${sectionStats.divergenciaPositiva.toFixed(2)}`, fontSize: 9, color: 'green' },
-          { text: `R$ ${Math.abs(sectionStats.divergenciaNegativa).toFixed(2)}`, fontSize: 9, color: 'red' },
-          { text: `R$ ${sectionStats.diferencaTotal.toFixed(2)}`, fontSize: 9 },
-          { text: sectionStats.itensEscaneados.toString(), fontSize: 9 },
-          { text: sectionStats.skusUnicos.size.toString(), fontSize: 9 }
-        ]);
-
-      // Calcular divergências detalhadas para top 50
-      interface ProductDiscrepancy {
-        produto: string;
-        descricao: string;
-        secao: string;
+      interface ReportDiscrepancy extends CountLotGroup {
+        descricaoLocalizador: string;
         qtdeLoja: number;
-        qtdeContada: number;
         diferencaQtde: number;
         custoUnitario: number;
         valorTotal: number;
       }
 
-      const productDiscrepancies: ProductDiscrepancy[] = [];
+      const countsByLot = counts.reduce((acc, count) => {
+        const produto = count.produto || "N/A";
+        const lote = count.lote?.trim() || "";
+        const key = countLotKey(produto, lote);
+        if (!acc[key]) {
+          acc[key] = {
+            produto,
+            quantidadeEscaneada: 0,
+            quantidadeAjustada: 0,
+            codLocalizador: count.codLocalizador || "",
+            codigoLv: count.codigoLv || "",
+            lote,
+            validade: count.validade || "",
+            coletor: count.coletor || "",
+            inventariador: count.inventariador || "",
+            descricao: count.descricao || "",
+            ean: count.ean || "",
+            naoCadastrado: isNotRegistered(count),
+          };
+        }
+        acc[key].quantidadeEscaneada += parseInt(count.quantidade) || 0;
+        acc[key].quantidadeAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
+        return acc;
+      }, {} as Record<string, CountLotGroup>);
+
+      const reportDiscrepancies: ReportDiscrepancy[] = [];
+      const handledCountKeys = new Set<string>();
+      const handledProductsWithoutLot = new Set<string>();
+      let missingExpectedLots = 0;
+      let unexpectedCountedLots = 0;
+
+      const addDiscrepancy = (
+        product: Product,
+        countData: CountLotGroup | undefined,
+        qtdeLoja: number,
+        qtdeContada: number,
+        lote: string,
+      ) => {
+        const diferencaQtde = qtdeContada - qtdeLoja;
+        if (diferencaQtde === 0) return;
+        const custoUnitario = parseBRNumber(product.custoGerencial);
+        reportDiscrepancies.push({
+          produto: product.produto || "N/A",
+          quantidadeEscaneada: countData?.quantidadeEscaneada || 0,
+          quantidadeAjustada: qtdeContada,
+          codLocalizador: countData?.codLocalizador || product.codLocalizador || "",
+          descricaoLocalizador: product.descricaoLocalizador || "",
+          codigoLv: countData?.codigoLv || product.codigoLv || "",
+          lote,
+          validade: countData?.validade || product.validade || "",
+          coletor: countData?.coletor || "",
+          inventariador: countData?.inventariador || "",
+          descricao: product.descricao1 || countData?.descricao || "Sem descrição",
+          ean: product.ean1 || countData?.ean || "",
+          naoCadastrado: false,
+          qtdeLoja,
+          diferencaQtde,
+          custoUnitario,
+          valorTotal: custoUnitario * diferencaQtde,
+        });
+      };
 
       for (const product of products) {
-        let countData = countsByProduct[product.produto];
-        
-        if (!countData) {
-          const eans = [
-            product.ean1, product.ean2, product.ean3, product.ean4,
-            product.ean5, product.ean6, product.ean7, product.ean8,
-            product.ean9, product.ean10, product.ean11, product.ean12
-          ].filter(Boolean);
-          
-          for (const ean of eans) {
-            if (countsByProduct[ean]) {
-              countData = countsByProduct[ean];
-              break;
-            }
-          }
-        }
-
+        const productLot = product.lote?.trim() || "";
         const qtdeLoja = parseBRNumber(product.saldo);
-        const qtdeContada = countData?.quantidadeAjustada || 0;
-        const diferencaQtde = qtdeContada - qtdeLoja;
-        
-        if (diferencaQtde !== 0) {
-          const custoUnitario = parseBRNumber(product.custoGerencial);
-          const valorTotal = custoUnitario * diferencaQtde;
-          
-          productDiscrepancies.push({
-            produto: product.produto || "N/A",
-            descricao: product.descricao1 || "Sem descrição",
-            secao: countData?.secao || "SEM SEÇÃO",
-            qtdeLoja,
-            qtdeContada,
-            diferencaQtde,
-            custoUnitario,
-            valorTotal
+        if (productLot) {
+          const key = countLotKey(product.produto, productLot);
+          const countData = countsByLot[key];
+          if (countData) handledCountKeys.add(key);
+          else missingExpectedLots += 1;
+          addDiscrepancy(product, countData, qtdeLoja, countData?.quantidadeAjustada || 0, productLot);
+        } else {
+          if (handledProductsWithoutLot.has(product.produto)) continue;
+          handledProductsWithoutLot.add(product.produto);
+          const productCounts = Object.entries(countsByLot).filter(([, group]) => group.produto === product.produto);
+          productCounts.forEach(([key]) => handledCountKeys.add(key));
+          const total = productCounts.reduce((sum, [, group]) => sum + group.quantidadeAjustada, 0);
+          const firstCount = productCounts[0]?.[1];
+          const lots = [...new Set(productCounts.map(([, group]) => group.lote).filter(Boolean))].join(" / ");
+          addDiscrepancy(product, firstCount, qtdeLoja, total, lots);
+        }
+      }
+
+      for (const [key, countData] of Object.entries(countsByLot)) {
+        if (handledCountKeys.has(key)) continue;
+        const product = products.find((item) => item.produto === countData.produto);
+        if (product) {
+          unexpectedCountedLots += 1;
+          addDiscrepancy(product, countData, 0, countData.quantidadeAjustada, countData.lote);
+        } else {
+          reportDiscrepancies.push({
+            ...countData,
+            descricao: "Produto não cadastrado",
+            descricaoLocalizador: "",
+            naoCadastrado: true,
+            qtdeLoja: 0,
+            diferencaQtde: countData.quantidadeAjustada,
+            custoUnitario: 0,
+            valorTotal: 0,
           });
         }
       }
 
-      // Top 50 maiores faltas
-      const top50Faltas = productDiscrepancies
-        .filter(p => p.valorTotal < 0)
-        .sort((a, b) => a.valorTotal - b.valorTotal)
-        .slice(0, 50)
-        .map(p => [
-          { text: p.produto, fontSize: 8 },
-          { text: p.descricao.substring(0, 30), fontSize: 8 },
-          { text: p.secao, fontSize: 8 },
-          { text: p.qtdeLoja.toString(), fontSize: 8, alignment: 'center' },
-          { text: p.qtdeContada.toString(), fontSize: 8, alignment: 'center' },
-          { text: p.diferencaQtde.toString(), fontSize: 8, alignment: 'center', color: 'red' },
-          { text: `R$ ${p.custoUnitario.toFixed(2)}`, fontSize: 8, alignment: 'right' },
-          { text: `R$ ${Math.abs(p.valorTotal).toFixed(2)}`, fontSize: 8, alignment: 'right', color: 'red', bold: true }
-        ]);
+      const registeredDiscrepancies = reportDiscrepancies.filter((item) => !item.naoCadastrado);
+      const notRegisteredRows = reportDiscrepancies.filter((item) => item.naoCadastrado);
+      const registeredProductCodes = new Set(products.map((product) => product.produto));
 
-      // Top 50 maiores sobras
-      const top50Sobras = productDiscrepancies
-        .filter(p => p.valorTotal > 0)
-        .sort((a, b) => b.valorTotal - a.valorTotal)
-        .slice(0, 50)
-        .map(p => [
-          { text: p.produto, fontSize: 8 },
-          { text: p.descricao.substring(0, 30), fontSize: 8 },
-          { text: p.secao, fontSize: 8 },
-          { text: p.qtdeLoja.toString(), fontSize: 8, alignment: 'center' },
-          { text: p.qtdeContada.toString(), fontSize: 8, alignment: 'center' },
-          { text: p.diferencaQtde.toString(), fontSize: 8, alignment: 'center', color: 'green' },
-          { text: `R$ ${p.custoUnitario.toFixed(2)}`, fontSize: 8, alignment: 'right' },
-          { text: `R$ ${p.valorTotal.toFixed(2)}`, fontSize: 8, alignment: 'right', color: 'green', bold: true }
-        ]);
+      interface OperatorStats {
+        leituras: number;
+        skusLotes: Set<string>;
+        quantidadeEscaneada: number;
+        quantidadeAjustada: number;
+        gruposAjustados: Set<string>;
+        ajusteAbsoluto: number;
+        naoCadastrados: Set<string>;
+        divergencias: number;
+        valorLiquido: number;
+      }
 
-      const docDefinition: any = {
-        pageSize: 'A4',
-        pageOrientation: 'portrait',
+      const operatorStats: Record<string, OperatorStats> = {};
+      const getOperator = (name?: string) => name?.trim() || "NÃO INFORMADO";
+      const ensureOperator = (name: string) => operatorStats[name] ||= {
+        leituras: 0,
+        skusLotes: new Set(),
+        quantidadeEscaneada: 0,
+        quantidadeAjustada: 0,
+        gruposAjustados: new Set(),
+        ajusteAbsoluto: 0,
+        naoCadastrados: new Set(),
+        divergencias: 0,
+        valorLiquido: 0,
+      };
+
+      counts.forEach((count) => {
+        const operator = ensureOperator(getOperator(count.inventariador));
+        const groupKey = countLotKey(count.produto || "N/A", count.lote);
+        const scanned = parseInt(count.quantidade) || 0;
+        const adjusted = parseInt(count.quantidadeAjustada || count.quantidade) || 0;
+        operator.leituras += 1;
+        operator.skusLotes.add(groupKey);
+        operator.quantidadeEscaneada += scanned;
+        operator.quantidadeAjustada += adjusted;
+        if (scanned !== adjusted) {
+          operator.gruposAjustados.add(groupKey);
+          operator.ajusteAbsoluto += Math.abs(adjusted - scanned);
+        }
+        if (isNotRegistered(count) || !registeredProductCodes.has(count.produto || "")) {
+          operator.naoCadastrados.add(groupKey);
+        }
+      });
+
+      registeredDiscrepancies.forEach((discrepancy) => {
+        if (!discrepancy.inventariador) return;
+        const operator = ensureOperator(getOperator(discrepancy.inventariador));
+        operator.divergencias += 1;
+        operator.valorLiquido += discrepancy.valorTotal;
+      });
+
+      const operatorTableData = Object.entries(operatorStats)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([operator, data]) => [
+          operator,
+          data.leituras.toString(),
+          data.skusLotes.size.toString(),
+          data.quantidadeEscaneada.toString(),
+          data.quantidadeAjustada.toString(),
+          `${data.gruposAjustados.size} / ${data.ajusteAbsoluto} un`,
+          data.naoCadastrados.size.toString(),
+          data.divergencias.toString(),
+          `R$ ${data.valorLiquido.toFixed(2)}`,
+        ].map((text) => ({ text, fontSize: 7, alignment: 'center' as const })));
+
+      const discrepancyRows = (items: ReportDiscrepancy[], color: string) => items.map((item) => [
+        item.codLocalizador || "-", item.codigoLv || "-", item.produto, item.ean || "-",
+        item.descricao.substring(0, 32), item.lote || "-", item.validade || "-",
+        item.qtdeLoja.toString(), item.quantidadeAjustada.toString(), item.diferencaQtde.toString(),
+        `R$ ${item.valorTotal.toFixed(2)}`,
+      ].map((text, index) => ({ text, fontSize: 6.5, alignment: index >= 7 ? 'center' as const : 'left' as const, color: index >= 9 ? color : undefined })));
+
+      const top50Faltas = discrepancyRows(
+        registeredDiscrepancies.filter((item) => item.valorTotal < 0).sort((a, b) => a.valorTotal - b.valorTotal).slice(0, 50),
+        'red',
+      );
+      const top50Sobras = discrepancyRows(
+        registeredDiscrepancies.filter((item) => item.valorTotal > 0).sort((a, b) => b.valorTotal - a.valorTotal).slice(0, 50),
+        'green',
+      );
+      const notRegisteredTableData = notRegisteredRows.map((item) => [
+        item.codLocalizador || "-", item.codigoLv || "-", item.produto, item.ean || "-",
+        item.descricao, item.lote || "-", item.validade || "-", item.quantidadeAjustada.toString(),
+        item.coletor || "-", item.inventariador || "-",
+      ].map((text) => ({ text, fontSize: 7 })));
+
+      const operationalStats = {
+        readings: counts.length,
+        groups: Object.keys(countsByLot).length,
+        scanned: counts.reduce((sum, count) => sum + (parseInt(count.quantidade) || 0), 0),
+        adjusted: counts.reduce((sum, count) => sum + (parseInt(count.quantidadeAjustada || count.quantidade) || 0), 0),
+        operators: Object.keys(operatorStats).length,
+        notRegistered: notRegisteredRows.length,
+        missingExpectedLots,
+        unexpectedCountedLots,
+      };
+
+      const docDefinition: TDocumentDefinitions = {
+        pageSize: 'A3',
+        pageOrientation: 'landscape',
         pageMargins: [40, logoBase64 ? 130 : 80, 40, 60],
         header: logoBase64 ? {
           stack: [
@@ -405,7 +464,7 @@ const Index = () => {
             ]
           },
           {
-            text: '\nANÁLISE POR SEÇÃO',
+            text: '\nRESUMO OPERACIONAL',
             style: 'sectionTitle',
             margin: [0, 20, 0, 15],
             pageBreak: 'before'
@@ -414,25 +473,71 @@ const Index = () => {
             style: 'tableStyle',
             table: {
               headerRows: 1,
-              widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto'],
+              widths: ['*', '*', '*', '*', '*', '*', '*', '*'],
               body: [
+                ['LEITURAS', 'PRODUTO/LOTE', 'QTD ESCANEADA', 'QTD AJUSTADA', 'OPERADORES', 'NÃO CADASTRADOS', 'LOTES NÃO CONTADOS', 'LOTES INESPERADOS']
+                  .map((text) => ({ text, style: 'tableHeader' })),
                 [
-                  { text: 'SEÇÃO', style: 'tableHeader' },
-                  { text: 'DIVERGÊNCIA POSITIVA', style: 'tableHeader' },
-                  { text: 'DIVERGÊNCIA NEGATIVA', style: 'tableHeader' },
-                  { text: 'DIFERENÇA TOTAL', style: 'tableHeader' },
-                  { text: 'ITENS ESCANEADOS', style: 'tableHeader' },
-                  { text: 'SKUs ÚNICOS', style: 'tableHeader' }
-                ],
-                ...sectionTableData
+                  operationalStats.readings,
+                  operationalStats.groups,
+                  operationalStats.scanned,
+                  operationalStats.adjusted,
+                  operationalStats.operators,
+                  operationalStats.notRegistered,
+                  operationalStats.missingExpectedLots,
+                  operationalStats.unexpectedCountedLots,
+                ].map((value) => ({ text: value.toString(), fontSize: 9, alignment: 'center' }))
+              ]
+            },
+            layout: 'lightHorizontalLines'
+          },
+          {
+            text: '\nANÁLISE DE ERROS POR OPERADOR',
+            style: 'sectionTitle',
+            margin: [0, 20, 0, 8]
+          },
+          {
+            text: 'As divergências sem contagem não são atribuídas a um operador. “Ajustes” mostra grupos ajustados e unidades alteradas.',
+            fontSize: 8,
+            color: '#666666',
+            margin: [0, 0, 0, 10]
+          },
+          {
+            style: 'tableStyle',
+            table: {
+              headerRows: 1,
+              widths: ['*', 55, 60, 70, 70, 75, 75, 65, 80],
+              body: [
+                ['OPERADOR', 'LEITURAS', 'SKUs/LOTES', 'QTD ESC.', 'QTD AJ.', 'AJUSTES', 'NÃO CAD.', 'DIVERG.', 'VALOR LÍQUIDO']
+                  .map((text) => ({ text, style: 'tableHeader' })),
+                ...operatorTableData
               ]
             },
             layout: {
-              fillColor: function (rowIndex: number) {
-                return rowIndex === 0 ? '#CCCCCC' : (rowIndex % 2 === 0 ? '#F5F5F5' : null);
-              }
+              fillColor: (rowIndex: number) => rowIndex === 0 ? '#CCCCCC' : (rowIndex % 2 === 0 ? '#F5F5F5' : null)
             }
           },
+          {
+            text: '\nPRODUTOS NÃO CADASTRADOS',
+            style: 'sectionTitle',
+            margin: [0, 20, 0, 10],
+            pageBreak: 'before'
+          },
+          notRegisteredTableData.length > 0 ? {
+            style: 'tableStyle',
+            table: {
+              headerRows: 1,
+              widths: [65, 55, 55, 80, '*', 65, 55, 45, 55, 75],
+              body: [
+                ['LOCALIZADOR', 'CÓD. LV', 'PRODUTO', 'EAN', 'DESCRIÇÃO', 'LOTE', 'VALIDADE', 'QTD', 'COLETOR', 'OPERADOR']
+                  .map((text) => ({ text, style: 'tableHeader' })),
+                ...notRegisteredTableData
+              ]
+            },
+            layout: {
+              fillColor: (rowIndex: number) => rowIndex === 0 ? '#CCCCCC' : (rowIndex % 2 === 0 ? '#FFF4F4' : null)
+            }
+          } : { text: 'Nenhum produto não cadastrado encontrado.', fontSize: 9, color: '#666666' },
           {
             text: '\nTOP 50 MAIORES FALTAS',
             style: 'sectionTitle',
@@ -443,18 +548,10 @@ const Index = () => {
             style: 'tableStyle',
             table: {
               headerRows: 1,
-              widths: [50, '*', 60, 40, 40, 40, 50, 60],
+              widths: [65, 55, 50, 75, '*', 60, 55, 45, 45, 40, 70],
               body: [
-                [
-                  { text: 'PRODUTO', style: 'tableHeader' },
-                  { text: 'DESCRIÇÃO', style: 'tableHeader' },
-                  { text: 'SEÇÃO', style: 'tableHeader' },
-                  { text: 'QTD LOJA', style: 'tableHeader' },
-                  { text: 'QTD CONT.', style: 'tableHeader' },
-                  { text: 'DIF.', style: 'tableHeader' },
-                  { text: 'R$ UNIT.', style: 'tableHeader' },
-                  { text: 'R$ TOTAL', style: 'tableHeader' }
-                ],
+                ['LOCALIZADOR', 'CÓD. LV', 'PRODUTO', 'EAN', 'DESCRIÇÃO', 'LOTE', 'VALIDADE', 'QTD LOJA', 'QTD CONT.', 'DIF.', 'R$ TOTAL']
+                  .map((text) => ({ text, style: 'tableHeader' })),
                 ...top50Faltas
               ]
             },
@@ -474,18 +571,10 @@ const Index = () => {
             style: 'tableStyle',
             table: {
               headerRows: 1,
-              widths: [50, '*', 60, 40, 40, 40, 50, 60],
+              widths: [65, 55, 50, 75, '*', 60, 55, 45, 45, 40, 70],
               body: [
-                [
-                  { text: 'PRODUTO', style: 'tableHeader' },
-                  { text: 'DESCRIÇÃO', style: 'tableHeader' },
-                  { text: 'SEÇÃO', style: 'tableHeader' },
-                  { text: 'QTD LOJA', style: 'tableHeader' },
-                  { text: 'QTD CONT.', style: 'tableHeader' },
-                  { text: 'DIF.', style: 'tableHeader' },
-                  { text: 'R$ UNIT.', style: 'tableHeader' },
-                  { text: 'R$ TOTAL', style: 'tableHeader' }
-                ],
+                ['LOCALIZADOR', 'CÓD. LV', 'PRODUTO', 'EAN', 'DESCRIÇÃO', 'LOTE', 'VALIDADE', 'QTD LOJA', 'QTD CONT.', 'DIF.', 'R$ TOTAL']
+                  .map((text) => ({ text, style: 'tableHeader' })),
                 ...top50Sobras
               ]
             },
