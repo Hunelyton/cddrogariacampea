@@ -522,7 +522,7 @@ A exportação respeita busca, filtros e ordenação atuais, mas exporta todos o
 | --- | --- |
 | `public/logo-drogaria.png` | Logo carregada via `fetch` nos PDFs |
 | `src/assets/logo-drogaria-campea.png` | Logo exibida no cabeçalho pelo bundle |
-| `public/favicon.png` / `favicon.ico` | Ícone do site |
+| `public/favicon.png` | Ícone do site com a identidade da Drogarias Campeã |
 | `public/robots.txt` | Orientação para rastreadores |
 | `public/placeholder.svg` | Imagem genérica de placeholder |
 
