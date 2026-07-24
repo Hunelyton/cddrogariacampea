@@ -49,6 +49,13 @@ interface ImportDialogProps {
 
 type SpreadsheetCell = string | number | boolean | Date | null | undefined;
 
+const getImportedValue = (value: SpreadsheetCell): string => {
+  if (value == null) return "";
+
+  const text = value.toString();
+  return text.trim() === "" || text.trim().toLowerCase() === "null" ? "" : text;
+};
+
 export const ImportDialog = ({ open, onOpenChange, onImportComplete }: ImportDialogProps) => {
   const [file, setFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -111,41 +118,30 @@ export const ImportDialog = ({ open, onOpenChange, onImportComplete }: ImportDia
           const row = jsonData[i];
           
           const product: Product = {
-            empresa: row[defaultMapping.empresa]?.toString() || "",
-            produto: row[defaultMapping.produto]?.toString() || "",
-            descricao1: row[defaultMapping.descricao1]?.toString() || "",
-            saldo: row[defaultMapping.saldo]?.toString() || "",
-            controlado: row[defaultMapping.controlado]?.toString() || "",
-            custoGerencial: row[defaultMapping.custoGerencial]?.toString() || "",
-            ean1: row[defaultMapping.ean1]?.toString() || "",
-            ean2: row[defaultMapping.ean2]?.toString() || "",
-            ean3: row[defaultMapping.ean3]?.toString() || "",
-            ean4: row[defaultMapping.ean4]?.toString() || "",
-            ean5: row[defaultMapping.ean5]?.toString() || "",
-            ean6: row[defaultMapping.ean6]?.toString() || "",
-            ean7: row[defaultMapping.ean7]?.toString() || "",
-            ean8: row[defaultMapping.ean8]?.toString() || "",
-            ean9: row[defaultMapping.ean9]?.toString() || "",
-            ean10: row[defaultMapping.ean10]?.toString() || "",
-            ean11: row[defaultMapping.ean11]?.toString() || "",
-            ean12: row[defaultMapping.ean12]?.toString() || "",
-            lote: row[defaultMapping.lote]?.toString() || "",
-            validade: row[defaultMapping.validade]?.toString() || "",
-            codLocalizador: row[defaultMapping.codLocalizador]?.toString() || "",
-            descricaoLocalizador: row[defaultMapping.descricaoLocalizador]?.toString() || "",
-            codigoLv: row[defaultMapping.codigoLv]?.toString() || "",
+            empresa: getImportedValue(row[defaultMapping.empresa]),
+            produto: getImportedValue(row[defaultMapping.produto]),
+            descricao1: getImportedValue(row[defaultMapping.descricao1]),
+            saldo: getImportedValue(row[defaultMapping.saldo]),
+            controlado: getImportedValue(row[defaultMapping.controlado]),
+            custoGerencial: getImportedValue(row[defaultMapping.custoGerencial]),
+            ean1: getImportedValue(row[defaultMapping.ean1]),
+            ean2: getImportedValue(row[defaultMapping.ean2]),
+            ean3: getImportedValue(row[defaultMapping.ean3]),
+            ean4: getImportedValue(row[defaultMapping.ean4]),
+            ean5: getImportedValue(row[defaultMapping.ean5]),
+            ean6: getImportedValue(row[defaultMapping.ean6]),
+            ean7: getImportedValue(row[defaultMapping.ean7]),
+            ean8: getImportedValue(row[defaultMapping.ean8]),
+            ean9: getImportedValue(row[defaultMapping.ean9]),
+            ean10: getImportedValue(row[defaultMapping.ean10]),
+            ean11: getImportedValue(row[defaultMapping.ean11]),
+            ean12: getImportedValue(row[defaultMapping.ean12]),
+            lote: getImportedValue(row[defaultMapping.lote]),
+            validade: getImportedValue(row[defaultMapping.validade]),
+            codLocalizador: getImportedValue(row[defaultMapping.codLocalizador]),
+            descricaoLocalizador: getImportedValue(row[defaultMapping.descricaoLocalizador]),
+            codigoLv: getImportedValue(row[defaultMapping.codigoLv]),
           };
-
-          // Se não houver nenhum EAN, usar o código do produto no EAN1
-          const hasAnyEan = [
-            product.ean1, product.ean2, product.ean3, product.ean4,
-            product.ean5, product.ean6, product.ean7, product.ean8,
-            product.ean9, product.ean10, product.ean11, product.ean12
-          ].some(ean => ean && ean.trim() !== "");
-
-          if (!hasAnyEan && product.produto && product.produto.trim() !== "") {
-            product.ean1 = product.produto;
-          }
 
           products.push(product);
           
