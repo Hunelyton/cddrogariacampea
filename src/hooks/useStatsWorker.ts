@@ -4,6 +4,7 @@ import { dataCache, CACHE_KEYS, CACHE_TTL } from '@/lib/cache';
 
 interface DashboardStats {
   productsCount: number;
+  productLotCount: number;
   uniqueSkus: number;
   totalItems: number;
   activeDiscrepancies: number;
@@ -20,6 +21,7 @@ interface DashboardStats {
 
 const initialStats: DashboardStats = {
   productsCount: 0,
+  productLotCount: 0,
   uniqueSkus: 0,
   totalItems: 0,
   activeDiscrepancies: 0,
@@ -68,10 +70,17 @@ export function useStatsWorker() {
         function calculateStats(products, counts) {
           const uniqueProductsCadastro = new Set(products.map(p => p.produto).filter(Boolean));
           const productsCount = uniqueProductsCadastro.size;
+          const uniqueProductLotsCadastro = new Set(
+            products
+              .filter(p => p.produto)
+              .map(p => p.produto + "::LOT::" + (p.lote ? String(p.lote).trim().toUpperCase() : ""))
+          );
+          const productLotCount = uniqueProductLotsCadastro.size;
           
           if (counts.length === 0) {
             return {
               productsCount,
+              productLotCount,
               uniqueSkus: 0,
               totalItems: 0,
               activeDiscrepancies: 0,
@@ -209,6 +218,7 @@ export function useStatsWorker() {
 
           return {
             productsCount,
+            productLotCount,
             uniqueSkus,
             totalItems,
             activeDiscrepancies: discCount,
@@ -298,8 +308,14 @@ export function useStatsWorker() {
             // Cálculo inline como fallback
             const uniqueProductsCadastro = new Set(products.map(p => p.produto).filter(Boolean));
             const productsCount = uniqueProductsCadastro.size;
+            const uniqueProductLotsCadastro = new Set(
+              products
+                .filter(p => p.produto)
+                .map(p => `${p.produto}::LOT::${p.lote?.trim().toUpperCase() || ""}`)
+            );
+            const productLotCount = uniqueProductLotsCadastro.size;
             
-            setStats(prev => ({ ...prev, productsCount }));
+            setStats(prev => ({ ...prev, productsCount, productLotCount }));
             setIsCalculating(false);
           });
         } catch (e) {

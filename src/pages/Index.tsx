@@ -361,8 +361,8 @@ const Index = () => {
                 width: '50%',
                 stack: [
                   { text: 'Produtos Cadastrados', style: 'cardLabel' },
-                  { text: stats.productsCount.toString(), style: 'cardValue', color: '#0066CC' },
-                  { text: 'Importação Planilha', style: 'cardSubtitle' },
+                  { text: `${stats.productsCount} códigos | ${stats.productLotCount} produtos por lote`, style: 'cardValue', color: '#0066CC' },
+                  { text: 'Mesmo código em lotes diferentes é contado separadamente', style: 'cardSubtitle' },
                   { text: '\n' }
                 ]
               },
@@ -655,7 +655,7 @@ const Index = () => {
         icon={<FileText className="w-6 h-6 text-info-blue-foreground" />}
         label="PRODUTOS CADASTRADOS"
         value={stats.productsCount}
-        subtitle="Importação Planilha"
+        subtitle={`${stats.productLotCount} produtos ao todo (código + lote)`}
         variant="blue"
       />
       

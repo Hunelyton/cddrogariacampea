@@ -177,7 +177,7 @@ O dashboard apresenta nove cards:
 
 | Card | Conteúdo |
 | --- | --- |
-| Produtos cadastrados | Quantidade de códigos de produto únicos no cadastro |
+| Produtos cadastrados | Quantidade de códigos únicos e total por código + lote (lotes diferentes do mesmo código são contados separadamente) |
 | Itens contados | SKUs diferentes e soma das quantidades ajustadas/contadas |
 | Divergências ativas | Produtos cuja quantidade contada difere do saldo |
 | Divergência positiva | Valor financeiro das sobras |
