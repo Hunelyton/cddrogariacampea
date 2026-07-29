@@ -177,15 +177,15 @@ O dashboard apresenta nove cards:
 
 | Card | Conteúdo |
 | --- | --- |
-| Produtos cadastrados | Quantidade de códigos únicos e total por código + lote (lotes diferentes do mesmo código são contados separadamente) |
-| Itens contados | SKUs diferentes e soma das quantidades ajustadas/contadas |
+| Produtos cadastrados | SKUs únicos, combinações de produto + lote e localizadores únicos do cadastro |
+| Itens contados | SKUs, unidades ajustadas/contadas, localizadores e lotes únicos presentes na contagem |
 | Divergências ativas | Produtos cuja quantidade contada difere do saldo |
 | Divergência positiva | Valor financeiro das sobras |
 | Divergência negativa | Valor financeiro absoluto das faltas |
 | Diferença financeira | Soma algébrica das divergências positivas e negativas |
-| Quantidade de SKU ajustado | SKUs e itens que tiveram ajuste |
+| Erro por operador | Soma dos SKUs e das unidades com ajuste atribuídos aos operadores |
 | Não cadastrados / manuais | Leituras sem cadastro e inclusões manuais |
-| Margem total de ajustes | Total de unidades após ajuste e itens ajustados |
+| Margem total de ajustes | Grupos de produto + lote + localizador ajustados e soma absoluta das unidades alteradas |
 
 ### Aba Cadastro de Produtos
 
@@ -201,7 +201,7 @@ O dashboard apresenta nove cards:
 - pesquisa geral por produto, EAN, descrição, código localizador, lote, validade, código LV, coletor ou inventariador;
 - formulário de inclusão manual com código localizador, EAN, quantidade, lote, validade e código LV;
 - filtros **Mostrar controlados** e **MOSTRAR SOMENTE NÃO CADASTRADOS**; ao ativar o segundo, apenas contagens sem cadastro são exibidas;
-- agrupamento das leituras pela combinação de produto e lote, sem unir lotes diferentes;
+- agrupamento das leituras pela combinação de produto, lote e localizador, sem unir localizadores ou lotes diferentes;
 - exibição apenas do EAN 1 normalizado do cadastro;
 - exibição de código localizador, lote, validade e código LV recebidos na contagem;
 - a descrição do localizador é preenchida pelo cadastro e exibida abaixo do código localizador, na mesma célula;
@@ -209,8 +209,8 @@ O dashboard apresenta nove cards:
 - código localizador, lote e validade vazios são apresentados como `-`, sem alterar o valor armazenado ou exportado;
 - soma da quantidade escaneada e da quantidade ajustada;
 - edição inline da quantidade ajustada, com Enter para salvar e Escape para cancelar;
-- exclusão das leituras de um produto e lote, após confirmação;
-- a confirmação de exclusão apresenta logo, nome da empresa, produto, EAN, descrição, lote e validade;
+- exclusão das leituras de um produto, lote e localizador, após confirmação;
+- a confirmação de exclusão apresenta logo, nome da empresa, produto, EAN, descrição, lote, validade e localizador;
 - exportação TXT com ponto e vírgula ou vírgula;
 - exportação Excel com todos os campos, respeitando os filtros e a ordenação selecionados;
 - ordenação por cabeçalho e paginação de 50 grupos.
@@ -306,14 +306,14 @@ A associação principal é feita pelo campo `produto`. Quando necessário, o si
 
 ### Agrupamento da contagem
 
-Todas as leituras com o mesmo `produto` e o mesmo `lote` formam um grupo. Lotes diferentes do mesmo produto permanecem em linhas separadas. Nesse grupo:
+Todas as leituras com o mesmo `produto`, o mesmo `lote` e o mesmo `localizador` formam um grupo. Lotes ou localizadores diferentes do mesmo produto permanecem em linhas separadas. Nesse grupo:
 
 - `quantidadeEscaneada` é a soma de `quantidade`;
 - `quantidadeAjustada` é a soma de `quantidadeAjustada`, usando `quantidade` como fallback;
 - EANs repetidos são exibidos apenas uma vez;
 - seção, coletor e inventariador vêm do primeiro registro do grupo.
 
-Ao editar uma quantidade ajustada, o total informado é salvo no primeiro registro da combinação produto + lote e os demais registros desse mesmo grupo recebem `0`. Isso preserva o total sem misturar lotes.
+Ao editar uma quantidade ajustada, o total informado é salvo no primeiro registro da combinação produto + lote + localizador e os demais registros desse mesmo grupo recebem `0`. Isso preserva o total sem misturar lotes ou localizadores.
 
 ### Números brasileiros
 
@@ -345,7 +345,7 @@ O lote também participa do confronto:
 
 ### Indicadores e ajustes
 
-Um produto é considerado ajustado quando a soma ajustada difere da soma originalmente escaneada. A diferença absoluta é atribuída aos inventariadores relacionados ao grupo para a métrica interna `errorsByInventor`.
+Um grupo de produto + lote + localizador é considerado ajustado quando a soma ajustada difere da soma originalmente escaneada. A diferença absoluta é atribuída aos inventariadores relacionados ao grupo para a métrica `errorsByInventor` e para o card **Erro por operador**.
 
 ## Persistência e cache
 
@@ -468,7 +468,8 @@ A exportação respeita busca, filtros e ordenação atuais, mas exporta todos o
 - inclui os indicadores financeiros e de contagem do dashboard;
 - confronta cadastro e contagem por produto e lote, seguindo a mesma regra da aba de divergências;
 - apresenta um resumo operacional com leituras, grupos únicos de produto/lote, quantidades escaneada e ajustada, operadores, produtos não cadastrados, lotes esperados sem contagem e lotes inesperados;
-- inclui análise de erros por operador/inventariador com leituras, SKUs/lotes, quantidades, ajustes, não cadastrados, divergências associadas e valor líquido;
+- inclui análise de erros por operador/inventariador com leituras, SKUs, localizadores, lotes, quantidades, SKUs e grupos ajustados, unidades alteradas, não cadastrados, divergências associadas e valor líquido;
+- informa, para cada operador, o percentual de unidades ajustadas sobre sua própria quantidade escaneada e sua participação percentual no total de ajustes;
 - faltas sem nenhuma contagem não são atribuídas artificialmente a um operador;
 - lista todos os produtos não cadastrados com localizador, código LV, produto, EAN, descrição, lote, validade, quantidade, coletor e operador;
 - apresenta as 50 maiores faltas e sobras, incluindo localizador, código LV, EAN, lote, validade e quantidades;
@@ -522,7 +523,7 @@ A exportação respeita busca, filtros e ordenação atuais, mas exporta todos o
 | --- | --- |
 | `public/logo-drogaria.png` | Logo carregada via `fetch` nos PDFs |
 | `src/assets/logo-drogaria-campea.png` | Logo exibida no cabeçalho pelo bundle |
-| `public/favicon.png` | Ícone do site com a identidade da Drogarias Campeã |
+| `public/favicon.png` / `favicon.ico` | Ícones do site com a identidade da Drogarias Campeã |
 | `public/robots.txt` | Orientação para rastreadores |
 | `public/placeholder.svg` | Imagem genérica de placeholder |
 
@@ -595,8 +596,8 @@ São primitivas geradas/adaptadas do shadcn/ui e Radix. Não contêm regras de i
 | `buildEanCache` | Monta o mapa interno EAN → produto |
 | `getProductByEan` | Busca um produto no mapa de EANs |
 | `getProductsByEans` | Busca vários EANs de uma vez |
-| `deleteCountsByProduct` | Exclui as contagens de uma combinação produto + lote |
-| `updateCountsByProduct` | Redistribui e salva o total ajustado de uma combinação produto + lote |
+| `deleteCountsByProduct` | Exclui as contagens de uma combinação produto + lote + localizador |
+| `updateCountsByProduct` | Redistribui e salva o total ajustado de uma combinação produto + lote + localizador |
 | `invalidateProductCache` | Descarta explicitamente o mapa EAN → produto |
 
 ### `src/components/ImportDialog.tsx`

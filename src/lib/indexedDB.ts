@@ -340,9 +340,13 @@ export const getProductsByEans = async (eans: string[]): Promise<Map<string, Pro
 };
 
 /**
- * Deleta contagens por produto
+ * Deleta contagens por produto, lote e localizador
  */
-export const deleteCountsByProduct = async (produto: string, lote?: string): Promise<void> => {
+export const deleteCountsByProduct = async (
+  produto: string,
+  lote?: string,
+  codLocalizador?: string
+): Promise<void> => {
   const db = await openDB();
   const transaction = db.transaction([COUNTS_STORE], "readwrite");
   const store = transaction.objectStore(COUNTS_STORE);
@@ -351,9 +355,12 @@ export const deleteCountsByProduct = async (produto: string, lote?: string): Pro
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
       const counts = request.result as Count[];
-      const normalizedLot = lote?.trim() || "";
+      const normalizedLot = lote?.trim().toUpperCase() || "";
+      const normalizedLocator = codLocalizador?.trim().toUpperCase() || "";
       const countsToDelete = counts.filter(c =>
-        c.produto === produto && (c.lote?.trim() || "") === normalizedLot
+        c.produto === produto &&
+        (c.lote?.trim().toUpperCase() || "") === normalizedLot &&
+        (c.codLocalizador?.trim().toUpperCase() || "") === normalizedLocator
       );
       
       countsToDelete.forEach(count => {
@@ -373,12 +380,13 @@ export const deleteCountsByProduct = async (produto: string, lote?: string): Pro
 };
 
 /**
- * Atualiza quantidade ajustada por produto
+ * Atualiza quantidade ajustada por produto, lote e localizador
  */
 export const updateCountsByProduct = async (
   produto: string,
   quantidadeAjustada: string,
-  lote?: string
+  lote?: string,
+  codLocalizador?: string
 ): Promise<void> => {
   const db = await openDB();
   const transaction = db.transaction([COUNTS_STORE], "readwrite");
@@ -388,9 +396,12 @@ export const updateCountsByProduct = async (
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
       const counts = request.result as Count[];
-      const normalizedLot = lote?.trim() || "";
+      const normalizedLot = lote?.trim().toUpperCase() || "";
+      const normalizedLocator = codLocalizador?.trim().toUpperCase() || "";
       const countsToUpdate = counts.filter(c =>
-        c.produto === produto && (c.lote?.trim() || "") === normalizedLot
+        c.produto === produto &&
+        (c.lote?.trim().toUpperCase() || "") === normalizedLot &&
+        (c.codLocalizador?.trim().toUpperCase() || "") === normalizedLocator
       );
       
       // Distribui a quantidade ajustada total entre os registros

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { StatCard } from "@/components/StatCard";
-import { FileText, Barcode, AlertTriangle, Wallet, TrendingUp, TrendingDown, PackageX, Edit3 } from "lucide-react";
+import { FileText, Barcode, AlertTriangle, Wallet, TrendingUp, TrendingDown, PackageX, Edit3, Users } from "lucide-react";
 import { getAllCounts, getAllProducts, Product, Count } from "@/lib/indexedDB";
 import { parseBRNumber } from "@/lib/utils";
 import { dataCache, CACHE_KEYS, CACHE_TTL } from "@/lib/cache";
@@ -92,7 +92,10 @@ const Index = () => {
       }
 
       const normalizeLot = (lot?: string) => lot?.trim().toUpperCase() || "";
+      const normalizeLocator = (locator?: string) => locator?.trim().toUpperCase() || "";
       const countLotKey = (produto: string, lote?: string) => `${produto}\u0000${normalizeLot(lote)}`;
+      const countGroupKey = (produto: string, lote?: string, locator?: string) =>
+        `${countLotKey(produto, lote)}\u0000${normalizeLocator(locator)}`;
       const isNotRegistered = (count: Count) => count.descricao === "Produto não cadastrado";
 
       interface CountLotGroup {
@@ -227,10 +230,14 @@ const Index = () => {
 
       interface OperatorStats {
         leituras: number;
-        skusLotes: Set<string>;
+        skus: Set<string>;
+        grupos: Set<string>;
+        localizadores: Set<string>;
+        lotes: Set<string>;
         quantidadeEscaneada: number;
         quantidadeAjustada: number;
         gruposAjustados: Set<string>;
+        skusAjustados: Set<string>;
         ajusteAbsoluto: number;
         naoCadastrados: Set<string>;
         divergencias: number;
@@ -241,32 +248,64 @@ const Index = () => {
       const getOperator = (name?: string) => name?.trim() || "NÃO INFORMADO";
       const ensureOperator = (name: string) => operatorStats[name] ||= {
         leituras: 0,
-        skusLotes: new Set(),
+        skus: new Set(),
+        grupos: new Set(),
+        localizadores: new Set(),
+        lotes: new Set(),
         quantidadeEscaneada: 0,
         quantidadeAjustada: 0,
         gruposAjustados: new Set(),
+        skusAjustados: new Set(),
         ajusteAbsoluto: 0,
         naoCadastrados: new Set(),
         divergencias: 0,
         valorLiquido: 0,
       };
 
+      const adjustmentGroups: Record<string, {
+        produto: string;
+        escaneada: number;
+        ajustada: number;
+        operadores: Set<string>;
+      }> = {};
+
       counts.forEach((count) => {
-        const operator = ensureOperator(getOperator(count.inventariador));
-        const groupKey = countLotKey(count.produto || "N/A", count.lote);
+        const operatorName = getOperator(count.inventariador);
+        const operator = ensureOperator(operatorName);
+        const produto = count.produto || "N/A";
+        const groupKey = countGroupKey(produto, count.lote, count.codLocalizador);
         const scanned = parseInt(count.quantidade) || 0;
         const adjusted = parseInt(count.quantidadeAjustada || count.quantidade) || 0;
         operator.leituras += 1;
-        operator.skusLotes.add(groupKey);
+        operator.skus.add(produto);
+        operator.grupos.add(groupKey);
+        if (normalizeLocator(count.codLocalizador)) operator.localizadores.add(normalizeLocator(count.codLocalizador));
+        if (normalizeLot(count.lote)) operator.lotes.add(normalizeLot(count.lote));
         operator.quantidadeEscaneada += scanned;
         operator.quantidadeAjustada += adjusted;
-        if (scanned !== adjusted) {
-          operator.gruposAjustados.add(groupKey);
-          operator.ajusteAbsoluto += Math.abs(adjusted - scanned);
-        }
+        adjustmentGroups[groupKey] ||= {
+          produto,
+          escaneada: 0,
+          ajustada: 0,
+          operadores: new Set(),
+        };
+        adjustmentGroups[groupKey].escaneada += scanned;
+        adjustmentGroups[groupKey].ajustada += adjusted;
+        adjustmentGroups[groupKey].operadores.add(operatorName);
         if (isNotRegistered(count) || !registeredProductCodes.has(count.produto || "")) {
           operator.naoCadastrados.add(groupKey);
         }
+      });
+
+      Object.entries(adjustmentGroups).forEach(([groupKey, group]) => {
+        const difference = Math.abs(group.ajustada - group.escaneada);
+        if (difference === 0) return;
+        group.operadores.forEach((operatorName) => {
+          const operator = ensureOperator(operatorName);
+          operator.gruposAjustados.add(groupKey);
+          operator.skusAjustados.add(group.produto);
+          operator.ajusteAbsoluto += difference;
+        });
       });
 
       registeredDiscrepancies.forEach((discrepancy) => {
@@ -276,19 +315,39 @@ const Index = () => {
         operator.valorLiquido += discrepancy.valorTotal;
       });
 
+      const totalOperatorAdjustments = Object.values(operatorStats)
+        .reduce((sum, data) => sum + data.ajusteAbsoluto, 0);
+      const totalOperatorAdjustedSkus = Object.values(operatorStats)
+        .reduce((sum, data) => sum + data.skusAjustados.size, 0);
+
       const operatorTableData = Object.entries(operatorStats)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([operator, data]) => [
-          operator,
-          data.leituras.toString(),
-          data.skusLotes.size.toString(),
-          data.quantidadeEscaneada.toString(),
-          data.quantidadeAjustada.toString(),
-          `${data.gruposAjustados.size} / ${data.ajusteAbsoluto} un`,
-          data.naoCadastrados.size.toString(),
-          data.divergencias.toString(),
-          `R$ ${data.valorLiquido.toFixed(2)}`,
-        ].map((text) => ({ text, fontSize: 7, alignment: 'center' as const })));
+        .map(([operator, data]) => {
+          const adjustmentRate = data.quantidadeEscaneada > 0
+            ? `${((data.ajusteAbsoluto / data.quantidadeEscaneada) * 100).toFixed(2).replace(".", ",")}%`
+            : (data.ajusteAbsoluto > 0 ? "N/A" : "0,00%");
+          const adjustmentShare = totalOperatorAdjustments > 0
+            ? `${((data.ajusteAbsoluto / totalOperatorAdjustments) * 100).toFixed(2).replace(".", ",")}%`
+            : "0,00%";
+
+          return [
+            operator,
+            data.leituras.toString(),
+            data.skus.size.toString(),
+            data.localizadores.size.toString(),
+            data.lotes.size.toString(),
+            data.quantidadeEscaneada.toString(),
+            data.quantidadeAjustada.toString(),
+            data.skusAjustados.size.toString(),
+            data.gruposAjustados.size.toString(),
+            `${data.ajusteAbsoluto} un`,
+            adjustmentRate,
+            adjustmentShare,
+            data.naoCadastrados.size.toString(),
+            data.divergencias.toString(),
+            `R$ ${data.valorLiquido.toFixed(2)}`,
+          ].map((text) => ({ text, fontSize: 6.5, alignment: 'center' as const }));
+        });
 
       const discrepancyRows = (items: ReportDiscrepancy[], color: string) => items.map((item) => [
         item.codLocalizador || "-", item.codigoLv || "-", item.produto, item.ean || "-",
@@ -313,7 +372,9 @@ const Index = () => {
 
       const operationalStats = {
         readings: counts.length,
-        groups: Object.keys(countsByLot).length,
+        groups: new Set(counts.map((count) =>
+          countGroupKey(count.produto || "N/A", count.lote, count.codLocalizador)
+        )).size,
         scanned: counts.reduce((sum, count) => sum + (parseInt(count.quantidade) || 0), 0),
         adjusted: counts.reduce((sum, count) => sum + (parseInt(count.quantidadeAjustada || count.quantidade) || 0), 0),
         operators: Object.keys(operatorStats).length,
@@ -361,8 +422,8 @@ const Index = () => {
                 width: '50%',
                 stack: [
                   { text: 'Produtos Cadastrados', style: 'cardLabel' },
-                  { text: `${stats.productsCount} códigos | ${stats.productLotCount} produtos por lote`, style: 'cardValue', color: '#0066CC' },
-                  { text: 'Mesmo código em lotes diferentes é contado separadamente', style: 'cardSubtitle' },
+                  { text: `${stats.productsCount} SKU + ${stats.productLotCount} produtos com lotes diferentes + ${stats.registeredLocatorCount} localizadores`, style: 'cardValue', color: '#0066CC' },
+                  { text: 'Códigos, combinações de produto/lote e localizadores únicos', style: 'cardSubtitle' },
                   { text: '\n' }
                 ]
               },
@@ -370,8 +431,8 @@ const Index = () => {
                 width: '50%',
                 stack: [
                   { text: 'Itens Contados', style: 'cardLabel' },
-                  { text: `${stats.uniqueSkus} SKUs | ${stats.totalItems} un`, style: 'cardValue', color: '#0066CC' },
-                  { text: 'SKUs diferentes + quantidade total', style: 'cardSubtitle' },
+                  { text: `${stats.uniqueSkus} SKU + ${stats.totalItems} un contadas + ${stats.countedLocatorCount} localizadores + ${stats.countedLotCount} lotes`, style: 'cardValue', color: '#0066CC' },
+                  { text: 'Totais únicos presentes na contagem', style: 'cardSubtitle' },
                   { text: '\n' }
                 ]
               }
@@ -431,10 +492,10 @@ const Index = () => {
               {
                 width: '50%',
                 stack: [
-                  { text: 'Quantidade de SKU Ajustado', style: 'cardLabel' },
-                  { text: `${stats.adjustedSkusCount} SKUs`, style: 'cardValue', color: '#FF9500' },
+                  { text: 'Erro por Operador', style: 'cardLabel' },
+                  { text: `${stats.operatorErrorSkusCount ?? 0} SKUs + ${stats.operatorErrorUnits ?? 0} itens`, style: 'cardValue', color: '#FF9500' },
                   { 
-                    text: `${stats.adjustedItemsCount} itens ajustados no total`, 
+                    text: 'Total de todos os operadores; o detalhamento está na análise por operador',
                     style: 'cardSubtitle' 
                   },
                   { text: '\n' }
@@ -444,7 +505,7 @@ const Index = () => {
                 width: '50%',
                 stack: [
                   { text: 'Não Cadastrados / Manuais', style: 'cardLabel' },
-                  { text: `${stats.notRegisteredCount} não cadastrados | ${stats.manualCount} manuais`, style: 'cardValue', color: 'red' },
+                  { text: `${stats.notRegisteredCount} não cadastrados + ${stats.manualCount} inseridos manualmente`, style: 'cardValue', color: 'red' },
                   { text: 'Produtos não cadastrados e inserções manuais', style: 'cardSubtitle' },
                   { text: '\n' }
                 ]
@@ -457,8 +518,8 @@ const Index = () => {
                 width: '50%',
                 stack: [
                   { text: 'Margem Total de Ajustes', style: 'cardLabel' },
-                  { text: `${stats.totalAdjusted} un | ${stats.adjustedItemsCount} itens ajustados`, style: 'cardValue', color: '#0066CC' },
-                  { text: 'Total de unidades ajustadas na contagem', style: 'cardSubtitle' }
+                  { text: `${stats.adjustedItemsCount} itens ajustados na contagem + ${stats.totalAdjusted} unidades ajustadas na contagem`, style: 'cardValue', color: '#0066CC' },
+                  { text: 'Unidades representam a diferença absoluta entre escaneado e ajustado', style: 'cardSubtitle' }
                 ]
               }
             ]
@@ -475,7 +536,7 @@ const Index = () => {
               headerRows: 1,
               widths: ['*', '*', '*', '*', '*', '*', '*', '*'],
               body: [
-                ['LEITURAS', 'PRODUTO/LOTE', 'QTD ESCANEADA', 'QTD AJUSTADA', 'OPERADORES', 'NÃO CADASTRADOS', 'LOTES NÃO CONTADOS', 'LOTES INESPERADOS']
+                ['LEITURAS', 'PRODUTO/LOTE/LOCALIZADOR', 'QTD ESCANEADA', 'QTD AJUSTADA', 'OPERADORES', 'NÃO CADASTRADOS', 'LOTES NÃO CONTADOS', 'LOTES INESPERADOS']
                   .map((text) => ({ text, style: 'tableHeader' })),
                 [
                   operationalStats.readings,
@@ -497,7 +558,14 @@ const Index = () => {
             margin: [0, 20, 0, 8]
           },
           {
-            text: 'As divergências sem contagem não são atribuídas a um operador. “Ajustes” mostra grupos ajustados e unidades alteradas.',
+            text: `${Object.keys(operatorStats).length} operadores | ${totalOperatorAdjustedSkus} SKUs com erro | ${totalOperatorAdjustments} unidades ajustadas`,
+            fontSize: 10,
+            bold: true,
+            color: '#FF9500',
+            margin: [0, 0, 0, 6]
+          },
+          {
+            text: '“% SOBRE CONTAGEM” compara as unidades ajustadas com a quantidade escaneada pelo operador. “% DOS AJUSTES” mostra a participação do operador no total de unidades ajustadas. Divergências sem contagem não são atribuídas artificialmente.',
             fontSize: 8,
             color: '#666666',
             margin: [0, 0, 0, 10]
@@ -506,9 +574,9 @@ const Index = () => {
             style: 'tableStyle',
             table: {
               headerRows: 1,
-              widths: ['*', 55, 60, 70, 70, 75, 75, 65, 80],
+              widths: ['*', 38, 38, 42, 38, 50, 50, 48, 48, 55, 55, 55, 45, 45, 65],
               body: [
-                ['OPERADOR', 'LEITURAS', 'SKUs/LOTES', 'QTD ESC.', 'QTD AJ.', 'AJUSTES', 'NÃO CAD.', 'DIVERG.', 'VALOR LÍQUIDO']
+                ['OPERADOR', 'LEITURAS', 'SKUs', 'LOCAIS', 'LOTES', 'QTD ESC.', 'QTD AJ.', 'SKUs AJ.', 'GRUPOS AJ.', 'UNID. AJ.', '% SOBRE CONTAGEM', '% DOS AJUSTES', 'NÃO CAD.', 'DIVERG.', 'VALOR LÍQUIDO']
                   .map((text) => ({ text, style: 'tableHeader' })),
                 ...operatorTableData
               ]
@@ -654,18 +722,16 @@ const Index = () => {
       <StatCard
         icon={<FileText className="w-6 h-6 text-info-blue-foreground" />}
         label="PRODUTOS CADASTRADOS"
-        value={stats.productsCount}
-        subtitle={`${stats.productLotCount} produtos ao todo (código + lote)`}
+        value={`${stats.productsCount} SKU`}
+        subtitle={`+ ${stats.productLotCount} produtos com lotes diferentes + ${stats.registeredLocatorCount} localizadores`}
         variant="blue"
       />
       
       <StatCard
         icon={<Barcode className="w-6 h-6 text-info-blue-foreground" />}
         label="ITENS CONTADOS"
-        value={stats.uniqueSkus}
-        secondaryValue={stats.totalItems}
-        secondaryLabel="un"
-        subtitle="SKUs diferentes + quantidade total"
+        value={`${stats.uniqueSkus} SKU`}
+        subtitle={`+ ${stats.totalItems} un contadas + ${stats.countedLocatorCount} localizadores + ${stats.countedLotCount} lotes`}
         variant="blue"
       />
       
@@ -702,30 +768,26 @@ const Index = () => {
       />
 
       <StatCard
-        icon={<Edit3 className="w-6 h-6 text-warning-orange-foreground" />}
-        label="QUANTIDADE DE SKU AJUSTADO"
-        value={`${stats.adjustedSkusCount} SKUs`}
-        subtitle={`${stats.adjustedItemsCount} itens ajustados no total`}
+        icon={<Users className="w-6 h-6 text-warning-orange-foreground" />}
+        label="ERRO POR OPERADOR"
+        value={`${stats.operatorErrorSkusCount ?? 0} SKUs + ${stats.operatorErrorUnits ?? 0} itens`}
+        subtitle="Total de todos os operadores"
         variant="warning"
       />
 
       <StatCard
         icon={<PackageX className="w-6 h-6 text-destructive-foreground" />}
         label="NÃO CADASTRADOS / MANUAIS"
-        value={stats.notRegisteredCount}
-        secondaryValue={stats.manualCount}
-        secondaryLabel="manuais"
-        subtitle="Produtos não cadastrados e inserções manuais"
+        value={`${stats.notRegisteredCount} não cadastrados`}
+        subtitle={`+ ${stats.manualCount} inseridos manualmente`}
         variant="destructive"
       />
 
       <StatCard
         icon={<Edit3 className="w-6 h-6 text-info-blue-foreground" />}
         label="MARGEM TOTAL DE AJUSTES"
-        value={stats.totalAdjusted}
-        secondaryValue={stats.adjustedItemsCount}
-        secondaryLabel="itens ajustados"
-        subtitle="Total de unidades ajustadas na contagem"
+        value={`${stats.adjustedItemsCount} itens ajustados`}
+        subtitle={`+ ${stats.totalAdjusted} unidades ajustadas na contagem`}
         variant="blue"
       />
     </div>

@@ -5,13 +5,18 @@ import { dataCache, CACHE_KEYS, CACHE_TTL } from '@/lib/cache';
 interface DashboardStats {
   productsCount: number;
   productLotCount: number;
+  registeredLocatorCount: number;
   uniqueSkus: number;
   totalItems: number;
+  countedLocatorCount: number;
+  countedLotCount: number;
   activeDiscrepancies: number;
   positiveDiscrepancy: number;
   negativeDiscrepancy: number;
   financialDifference: number;
   errorsByInventor: Record<string, number>;
+  operatorErrorSkusCount: number;
+  operatorErrorUnits: number;
   notRegisteredCount: number;
   manualCount: number;
   totalAdjusted: number;
@@ -22,13 +27,18 @@ interface DashboardStats {
 const initialStats: DashboardStats = {
   productsCount: 0,
   productLotCount: 0,
+  registeredLocatorCount: 0,
   uniqueSkus: 0,
   totalItems: 0,
+  countedLocatorCount: 0,
+  countedLotCount: 0,
   activeDiscrepancies: 0,
   positiveDiscrepancy: 0,
   negativeDiscrepancy: 0,
   financialDifference: 0,
   errorsByInventor: {},
+  operatorErrorSkusCount: 0,
+  operatorErrorUnits: 0,
   notRegisteredCount: 0,
   manualCount: 0,
   totalAdjusted: 0,
@@ -76,18 +86,28 @@ export function useStatsWorker() {
               .map(p => p.produto + "::LOT::" + (p.lote ? String(p.lote).trim().toUpperCase() : ""))
           );
           const productLotCount = uniqueProductLotsCadastro.size;
+          const registeredLocatorCount = new Set(
+            products
+              .map(p => p.codLocalizador ? String(p.codLocalizador).trim().toUpperCase() : "")
+              .filter(Boolean)
+          ).size;
           
           if (counts.length === 0) {
             return {
               productsCount,
               productLotCount,
+              registeredLocatorCount,
               uniqueSkus: 0,
               totalItems: 0,
+              countedLocatorCount: 0,
+              countedLotCount: 0,
               activeDiscrepancies: 0,
               positiveDiscrepancy: 0,
               negativeDiscrepancy: 0,
               financialDifference: 0,
               errorsByInventor: {},
+              operatorErrorSkusCount: 0,
+              operatorErrorUnits: 0,
               notRegisteredCount: 0,
               manualCount: 0,
               totalAdjusted: 0,
@@ -98,6 +118,16 @@ export function useStatsWorker() {
           
           const uniqueSkusCounted = new Set(counts.map(c => c.produto).filter(Boolean));
           const uniqueSkus = uniqueSkusCounted.size;
+          const countedLocatorCount = new Set(
+            counts
+              .map(c => c.codLocalizador ? String(c.codLocalizador).trim().toUpperCase() : "")
+              .filter(Boolean)
+          ).size;
+          const countedLotCount = new Set(
+            counts
+              .map(c => c.lote ? String(c.lote).trim().toUpperCase() : "")
+              .filter(Boolean)
+          ).size;
           
           const totalItems = counts.reduce((sum, c) => {
             return sum + (parseInt(c.quantidadeAjustada || c.quantidade) || 0);
@@ -109,6 +139,11 @@ export function useStatsWorker() {
 
           function lotKey(produto, lot) {
             return produto + "::LOT::" + normalizeLot(lot);
+          }
+
+          function adjustmentKey(produto, lot, locator) {
+            const normalizedLocator = locator ? String(locator).trim().toUpperCase() : "";
+            return lotKey(produto, lot) + "::LOCATOR::" + normalizedLocator;
           }
 
           const countsByLot = counts.reduce((acc, count) => {
@@ -165,26 +200,29 @@ export function useStatsWorker() {
           });
 
           const errorsByInventorMap = {};
+          const adjustedSkusByInventor = {};
           let notRegistered = 0;
           let manualInserts = 0;
 
-          // Agrupar ajustes por produto e lote para não misturar referências diferentes.
+          // Agrupar ajustes por produto, lote e localizador.
           const countsByProductForAdjust = {};
           counts.forEach((count) => {
             const produto = count.produto || "N/A";
-            const adjustmentKey = lotKey(produto, count.lote);
-            if (!countsByProductForAdjust[adjustmentKey]) {
-              countsByProductForAdjust[adjustmentKey] = {
+            const groupKey = adjustmentKey(produto, count.lote, count.codLocalizador);
+            if (!countsByProductForAdjust[groupKey]) {
+              countsByProductForAdjust[groupKey] = {
+                produto,
                 totalEscaneada: 0,
                 totalAjustada: 0,
                 inventariadores: new Set()
               };
             }
-            countsByProductForAdjust[adjustmentKey].totalEscaneada += parseInt(count.quantidade) || 0;
-            countsByProductForAdjust[adjustmentKey].totalAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
-            if (count.inventariador) {
-              countsByProductForAdjust[adjustmentKey].inventariadores.add(count.inventariador);
-            }
+            countsByProductForAdjust[groupKey].totalEscaneada += parseInt(count.quantidade) || 0;
+            countsByProductForAdjust[groupKey].totalAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
+            const inventariador = count.inventariador
+              ? String(count.inventariador).trim()
+              : "NÃO INFORMADO";
+            countsByProductForAdjust[groupKey].inventariadores.add(inventariador || "NÃO INFORMADO");
 
             if (count.descricao === "Produto não cadastrado") {
               notRegistered++;
@@ -196,40 +234,51 @@ export function useStatsWorker() {
           });
 
           // Agora calcular métricas de ajuste baseado em produtos únicos
-          let totalAdjustedQty = 0;
-          let adjustedProductsCount = 0;
+          let totalAdjustedUnits = 0;
+          let adjustedGroupsCount = 0;
           const adjustedSkusSet = new Set();
 
-          Object.entries(countsByProductForAdjust).forEach(([adjustmentKey, data]) => {
+          Object.values(countsByProductForAdjust).forEach((data) => {
             const difference = Math.abs(data.totalAjustada - data.totalEscaneada);
             
             if (difference > 0) {
-              // Produto foi ajustado
-              adjustedSkusSet.add(adjustmentKey);
-              adjustedProductsCount++;
-              totalAdjustedQty += data.totalAjustada; // Total ajustado (não a diferença)
+              adjustedSkusSet.add(data.produto);
+              adjustedGroupsCount++;
+              totalAdjustedUnits += difference;
               
               // Erros por inventariador (usar a diferença)
               data.inventariadores.forEach(inv => {
                 errorsByInventorMap[inv] = (errorsByInventorMap[inv] || 0) + difference;
+                if (!adjustedSkusByInventor[inv]) adjustedSkusByInventor[inv] = new Set();
+                adjustedSkusByInventor[inv].add(data.produto);
               });
             }
           });
 
+          const operatorErrorSkusCount = Object.values(adjustedSkusByInventor)
+            .reduce((sum, skus) => sum + skus.size, 0);
+          const operatorErrorUnits = Object.values(errorsByInventorMap)
+            .reduce((sum, units) => sum + units, 0);
+
           return {
             productsCount,
             productLotCount,
+            registeredLocatorCount,
             uniqueSkus,
             totalItems,
+            countedLocatorCount,
+            countedLotCount,
             activeDiscrepancies: discCount,
             positiveDiscrepancy: positiveSum,
             negativeDiscrepancy: negativeSum,
             financialDifference: positiveSum + negativeSum,
             errorsByInventor: errorsByInventorMap,
+            operatorErrorSkusCount,
+            operatorErrorUnits,
             notRegisteredCount: notRegistered,
             manualCount: manualInserts,
-            totalAdjusted: totalAdjustedQty,
-            adjustedItemsCount: adjustedProductsCount,
+            totalAdjusted: totalAdjustedUnits,
+            adjustedItemsCount: adjustedGroupsCount,
             adjustedSkusCount: adjustedSkusSet.size,
           };
         }
@@ -256,9 +305,10 @@ export function useStatsWorker() {
         const { type, stats: resultStats, error: resultError } = event.data;
         
         if (type === 'STATS_RESULT') {
-          setStats(resultStats);
+          const normalizedStats = { ...initialStats, ...resultStats };
+          setStats(normalizedStats);
           // Cache o resultado
-          dataCache.set(CACHE_KEYS.STATS, resultStats, CACHE_TTL.MEDIUM);
+          dataCache.set(CACHE_KEYS.STATS, normalizedStats, CACHE_TTL.MEDIUM);
           setIsCalculating(false);
         } else if (type === 'STATS_ERROR') {
           setError(resultError);
@@ -285,7 +335,7 @@ export function useStatsWorker() {
     // Verifica cache primeiro
     const cachedStats = dataCache.get<DashboardStats>(CACHE_KEYS.STATS);
     if (cachedStats) {
-      setStats(cachedStats);
+      setStats({ ...initialStats, ...cachedStats });
       return;
     }
 
@@ -314,8 +364,33 @@ export function useStatsWorker() {
                 .map(p => `${p.produto}::LOT::${p.lote?.trim().toUpperCase() || ""}`)
             );
             const productLotCount = uniqueProductLotsCadastro.size;
+            const registeredLocatorCount = new Set(
+              products
+                .map(p => p.codLocalizador?.trim().toUpperCase() || "")
+                .filter(Boolean)
+            ).size;
+            const uniqueSkus = new Set(counts.map(c => c.produto).filter(Boolean)).size;
+            const totalItems = counts.reduce(
+              (sum, count) => sum + (parseInt(count.quantidadeAjustada || count.quantidade) || 0),
+              0,
+            );
+            const countedLocatorCount = new Set(
+              counts.map(c => c.codLocalizador?.trim().toUpperCase() || "").filter(Boolean)
+            ).size;
+            const countedLotCount = new Set(
+              counts.map(c => c.lote?.trim().toUpperCase() || "").filter(Boolean)
+            ).size;
             
-            setStats(prev => ({ ...prev, productsCount, productLotCount }));
+            setStats(prev => ({
+              ...prev,
+              productsCount,
+              productLotCount,
+              registeredLocatorCount,
+              uniqueSkus,
+              totalItems,
+              countedLocatorCount,
+              countedLotCount,
+            }));
             setIsCalculating(false);
           });
         } catch (e) {

@@ -203,7 +203,8 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
     const grouped = counts.reduce((acc, count) => {
       const produto = count.produto || "N/A";
       const lote = count.lote?.trim() || "";
-      const groupKey = `${produto}\u0000${lote}`;
+      const codLocalizador = count.codLocalizador?.trim() || "";
+      const groupKey = `${produto}\u0000${lote.toUpperCase()}\u0000${codLocalizador.toUpperCase()}`;
       
       if (!acc[groupKey]) {
         acc[groupKey] = {
@@ -211,7 +212,7 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
           produto,
           ean1: count.ean || "",
           descricao: count.descricao || "",
-          codLocalizador: count.codLocalizador || "",
+          codLocalizador,
           quantidadeEscaneada: 0,
           quantidadeAjustada: 0,
           lote,
@@ -328,7 +329,7 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
     try {
       const group = groupedCounts.find((item) => item.groupKey === groupKey);
       if (!group) return;
-      await updateCountsByProduct(group.produto, tempAdjustedQty, group.lote);
+      await updateCountsByProduct(group.produto, tempAdjustedQty, group.lote, group.codLocalizador);
       await loadCounts();
       setEditingProduct(null);
       onUpdate?.();
@@ -414,12 +415,12 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
 
   const handleDeleteProduct = useCallback(async (group: GroupedCount) => {
     try {
-      await deleteCountsByProduct(group.produto, group.lote);
+      await deleteCountsByProduct(group.produto, group.lote, group.codLocalizador);
       await loadCounts();
       onUpdate?.();
       toast({
         title: "CD DROGARIAS CAMPEÃ — Produto excluído",
-        description: "As contagens deste produto e lote foram removidas.",
+        description: "As contagens deste produto, lote e localizador foram removidas.",
       });
     } catch (error) {
       toast({
@@ -830,7 +831,7 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
               </div>
             </div>
             <AlertDialogDescription className="pt-2">
-              Deseja realmente excluir as contagens deste produto e lote?
+              Deseja realmente excluir as contagens deste produto, lote e localizador?
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -855,6 +856,10 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
               <div>
                 <p className="text-xs text-muted-foreground">VALIDADE</p>
                 <p className="font-medium">{pendingDeletion.validade || "-"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">LOCALIZADOR</p>
+                <p className="font-medium">{pendingDeletion.codLocalizador || "-"}</p>
               </div>
             </div>
           )}
