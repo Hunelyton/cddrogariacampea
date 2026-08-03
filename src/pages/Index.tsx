@@ -93,9 +93,8 @@ const Index = () => {
 
       const normalizeLot = (lot?: string) => lot?.trim().toUpperCase() || "";
       const normalizeLocator = (locator?: string) => locator?.trim().toUpperCase() || "";
-      const countLotKey = (produto: string, lote?: string) => `${produto}\u0000${normalizeLot(lote)}`;
       const countGroupKey = (produto: string, lote?: string, locator?: string) =>
-        `${countLotKey(produto, lote)}\u0000${normalizeLocator(locator)}`;
+        `${produto}\u0000${normalizeLot(lote)}\u0000${normalizeLocator(locator)}`;
       const isNotRegistered = (count: Count) => count.descricao === "Produto não cadastrado";
 
       interface CountLotGroup {
@@ -121,10 +120,10 @@ const Index = () => {
         valorTotal: number;
       }
 
-      const countsByLot = counts.reduce((acc, count) => {
+      const countsByGroup = counts.reduce((acc, count) => {
         const produto = count.produto || "N/A";
         const lote = count.lote?.trim() || "";
-        const key = countLotKey(produto, lote);
+        const key = countGroupKey(produto, lote, count.codLocalizador);
         if (!acc[key]) {
           acc[key] = {
             produto,
@@ -187,15 +186,19 @@ const Index = () => {
         const productLot = product.lote?.trim() || "";
         const qtdeLoja = parseBRNumber(product.saldo);
         if (productLot) {
-          const key = countLotKey(product.produto, productLot);
-          const countData = countsByLot[key];
+          const key = countGroupKey(product.produto, productLot, product.codLocalizador);
+          const countData = countsByGroup[key];
           if (countData) handledCountKeys.add(key);
           else missingExpectedLots += 1;
           addDiscrepancy(product, countData, qtdeLoja, countData?.quantidadeAjustada || 0, productLot);
         } else {
-          if (handledProductsWithoutLot.has(product.produto)) continue;
-          handledProductsWithoutLot.add(product.produto);
-          const productCounts = Object.entries(countsByLot).filter(([, group]) => group.produto === product.produto);
+          const productLocatorKey = `${product.produto}\u0000${normalizeLocator(product.codLocalizador)}`;
+          if (handledProductsWithoutLot.has(productLocatorKey)) continue;
+          handledProductsWithoutLot.add(productLocatorKey);
+          const productCounts = Object.entries(countsByGroup).filter(([, group]) =>
+            group.produto === product.produto &&
+            normalizeLocator(group.codLocalizador) === normalizeLocator(product.codLocalizador)
+          );
           productCounts.forEach(([key]) => handledCountKeys.add(key));
           const total = productCounts.reduce((sum, [, group]) => sum + group.quantidadeAjustada, 0);
           const firstCount = productCounts[0]?.[1];
@@ -204,9 +207,12 @@ const Index = () => {
         }
       }
 
-      for (const [key, countData] of Object.entries(countsByLot)) {
+      for (const [key, countData] of Object.entries(countsByGroup)) {
         if (handledCountKeys.has(key)) continue;
-        const product = products.find((item) => item.produto === countData.produto);
+        const product = products.find((item) =>
+          item.produto === countData.produto &&
+          normalizeLocator(item.codLocalizador) === normalizeLocator(countData.codLocalizador)
+        ) || products.find((item) => item.produto === countData.produto);
         if (product) {
           unexpectedCountedLots += 1;
           addDiscrepancy(product, countData, 0, countData.quantidadeAjustada, countData.lote);

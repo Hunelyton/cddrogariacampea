@@ -57,7 +57,9 @@ interface CountLotGroup {
 }
 
 const normalizeLot = (lot?: string) => lot?.trim().toUpperCase() || "";
-const countLotKey = (produto: string, lote?: string) => `${produto}\u0000${normalizeLot(lote)}`;
+const normalizeLocator = (locator?: string) => locator?.trim().toUpperCase() || "";
+const countGroupKey = (produto: string, lote?: string, locator?: string) =>
+  `${produto}\u0000${normalizeLot(lote)}\u0000${normalizeLocator(locator)}`;
 
 const PAGE_SIZE = 50;
 
@@ -115,11 +117,11 @@ export const DiscrepanciesTable = memo(() => {
     const products = await getAllProducts();
     const counts = await getAllCounts();
 
-    // Cada lote do mesmo produto é uma contagem independente.
-    const countsByLot = counts.reduce((acc, count) => {
+    // Cada combinação de produto, lote e localizador é uma contagem independente.
+    const countsByGroup = counts.reduce((acc, count) => {
       const produto = count.produto || "N/A";
       const lote = count.lote?.trim() || "";
-      const key = countLotKey(produto, lote);
+      const key = countGroupKey(produto, lote, count.codLocalizador);
       if (!acc[key]) {
         acc[key] = {
           produto,
@@ -177,15 +179,19 @@ export const DiscrepanciesTable = memo(() => {
       const qtdeLoja = parseBRNumber(product.saldo);
 
       if (productLot) {
-        const key = countLotKey(product.produto, productLot);
-        const countData = countsByLot[key];
+        const key = countGroupKey(product.produto, productLot, product.codLocalizador);
+        const countData = countsByGroup[key];
         if (countData) handledCountKeys.add(key);
         addDiscrepancy(product, countData, qtdeLoja, countData?.quantidadeAjustada || 0, productLot);
       } else {
-        if (handledProductsWithoutLot.has(product.produto)) continue;
-        handledProductsWithoutLot.add(product.produto);
-        const productCounts = Object.entries(countsByLot)
-          .filter(([, group]) => group.produto === product.produto);
+        const productLocatorKey = `${product.produto}\u0000${normalizeLocator(product.codLocalizador)}`;
+        if (handledProductsWithoutLot.has(productLocatorKey)) continue;
+        handledProductsWithoutLot.add(productLocatorKey);
+        const productCounts = Object.entries(countsByGroup)
+          .filter(([, group]) =>
+            group.produto === product.produto &&
+            normalizeLocator(group.codLocalizador) === normalizeLocator(product.codLocalizador)
+          );
         productCounts.forEach(([key]) => handledCountKeys.add(key));
         const total = productCounts.reduce((sum, [, group]) => sum + group.quantidadeAjustada, 0);
         const firstCount = productCounts[0]?.[1];
@@ -195,9 +201,12 @@ export const DiscrepanciesTable = memo(() => {
     }
 
     // Um lote contado que não existe no cadastro é uma sobra daquele lote.
-    for (const [key, countData] of Object.entries(countsByLot)) {
+    for (const [key, countData] of Object.entries(countsByGroup)) {
       if (handledCountKeys.has(key)) continue;
-      const product = products.find((item) => item.produto === countData.produto);
+      const product = products.find((item) =>
+        item.produto === countData.produto &&
+        normalizeLocator(item.codLocalizador) === normalizeLocator(countData.codLocalizador)
+      ) || products.find((item) => item.produto === countData.produto);
       if (product) {
         addDiscrepancy(product, countData, 0, countData.quantidadeAjustada, countData.lote);
       } else {

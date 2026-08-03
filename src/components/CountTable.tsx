@@ -55,6 +55,9 @@ interface CountTableProps {
 type EnrichedCount = Count & { controlado: string };
 
 const PAGE_SIZE = 50;
+const normalizeLocator = (locator?: string) => locator?.trim().toUpperCase() || "";
+const productLocatorKey = (produto: string, locator?: string) =>
+  `${produto}\u0000${normalizeLocator(locator)}`;
 
 // Componente de linha memoizado
 const CountRow = memo(({ 
@@ -171,18 +174,25 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
     const data = await getAllCounts();
     
     const products = await getAllProducts();
-    const productsMap = products.reduce((acc, product) => {
-      acc[product.produto] = product;
-      return acc;
-    }, {} as Record<string, Product>);
+    const productsByCode = new Map<string, Product>();
+    const productsByLocator = new Map<string, Product>();
+
+    products.forEach((product) => {
+      if (!productsByCode.has(product.produto)) productsByCode.set(product.produto, product);
+      productsByLocator.set(productLocatorKey(product.produto, product.codLocalizador), product);
+    });
     
-    const enrichedCounts = data.map(count => ({
-      ...count,
-      controlado: count.produto ? (productsMap[count.produto]?.controlado || "") : "",
-      descricaoLocalizador: count.produto
-        ? (productsMap[count.produto]?.descricaoLocalizador || count.descricaoLocalizador || "")
-        : (count.descricaoLocalizador || ""),
-    }));
+    const enrichedCounts = data.map((count) => {
+      const product = count.produto
+        ? productsByLocator.get(productLocatorKey(count.produto, count.codLocalizador)) || productsByCode.get(count.produto)
+        : undefined;
+
+      return {
+        ...count,
+        controlado: product?.controlado || "",
+        descricaoLocalizador: product?.descricaoLocalizador || count.descricaoLocalizador || "",
+      };
+    });
     
     setCounts(enrichedCounts);
     setIsLoading(false);

@@ -141,16 +141,24 @@ export function useStatsWorker() {
             return produto + "::LOT::" + normalizeLot(lot);
           }
 
-          function adjustmentKey(produto, lot, locator) {
-            const normalizedLocator = locator ? String(locator).trim().toUpperCase() : "";
-            return lotKey(produto, lot) + "::LOCATOR::" + normalizedLocator;
+          function normalizeLocator(locator) {
+            return locator ? String(locator).trim().toUpperCase() : "";
           }
 
-          const countsByLot = counts.reduce((acc, count) => {
+          function inventoryKey(produto, lot, locator) {
+            return lotKey(produto, lot) + "::LOCATOR::" + normalizeLocator(locator);
+          }
+
+          const countsByGroup = counts.reduce((acc, count) => {
             const produto = count.produto || "N/A";
-            const key = lotKey(produto, count.lote);
+            const key = inventoryKey(produto, count.lote, count.codLocalizador);
             if (!acc[key]) {
-              acc[key] = { produto, lote: count.lote || "", quantidadeAjustada: 0 };
+              acc[key] = {
+                produto,
+                lote: count.lote || "",
+                codLocalizador: count.codLocalizador || "",
+                quantidadeAjustada: 0
+              };
             }
             acc[key].quantidadeAjustada += parseInt(count.quantidadeAjustada || count.quantidade) || 0;
             return acc;
@@ -176,26 +184,33 @@ export function useStatsWorker() {
             const productLot = normalizeLot(product.lote);
             const expected = parseBRNumber(product.saldo);
             if (productLot) {
-              const key = lotKey(product.produto, productLot);
-              const countData = countsByLot[key];
+              const key = inventoryKey(product.produto, productLot, product.codLocalizador);
+              const countData = countsByGroup[key];
               if (countData) handledCountKeys.add(key);
               applyDifference(product, expected, countData ? countData.quantidadeAjustada : 0);
             } else {
-              if (handledProductsWithoutLot.has(product.produto)) continue;
-              handledProductsWithoutLot.add(product.produto);
-              const productCounts = Object.entries(countsByLot)
-                .filter((entry) => entry[1].produto === product.produto);
+              const productLocatorKey = product.produto + "::LOCATOR::" + normalizeLocator(product.codLocalizador);
+              if (handledProductsWithoutLot.has(productLocatorKey)) continue;
+              handledProductsWithoutLot.add(productLocatorKey);
+              const productCounts = Object.entries(countsByGroup)
+                .filter((entry) =>
+                  entry[1].produto === product.produto &&
+                  normalizeLocator(entry[1].codLocalizador) === normalizeLocator(product.codLocalizador)
+                );
               productCounts.forEach((entry) => handledCountKeys.add(entry[0]));
               const counted = productCounts.reduce((sum, entry) => sum + entry[1].quantidadeAjustada, 0);
               applyDifference(product, expected, counted);
             }
           }
 
-          Object.entries(countsByLot).forEach((entry) => {
+          Object.entries(countsByGroup).forEach((entry) => {
             const key = entry[0];
             const countData = entry[1];
             if (handledCountKeys.has(key)) return;
-            const product = products.find((item) => item.produto === countData.produto);
+            const product = products.find((item) =>
+              item.produto === countData.produto &&
+              normalizeLocator(item.codLocalizador) === normalizeLocator(countData.codLocalizador)
+            ) || products.find((item) => item.produto === countData.produto);
             if (product) applyDifference(product, 0, countData.quantidadeAjustada);
           });
 
@@ -208,7 +223,7 @@ export function useStatsWorker() {
           const countsByProductForAdjust = {};
           counts.forEach((count) => {
             const produto = count.produto || "N/A";
-            const groupKey = adjustmentKey(produto, count.lote, count.codLocalizador);
+            const groupKey = inventoryKey(produto, count.lote, count.codLocalizador);
             if (!countsByProductForAdjust[groupKey]) {
               countsByProductForAdjust[groupKey] = {
                 produto,
