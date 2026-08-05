@@ -430,19 +430,13 @@ TTLs disponíveis: curto de 1 minuto, médio de 5 minutos e longo de 15 minutos.
 - aba: `Cadastro`;
 - conteúdo: cabeçalho das 23 colunas e larguras ajustadas.
 
-### Contagem TXT
-
-- `contagem_YYYY-MM-DD.txt`: `CODIGO_LOCALIZADOR;EAN1;QUANTIDADE_AJUSTADA;LOTE;VALIDADE;CODIGO_LV`;
-- `contagem_virgula_YYYY-MM-DD.txt`: `CODIGO_LOCALIZADOR,EAN1,QUANTIDADE_AJUSTADA,LOTE,VALIDADE,CODIGO_LV`.
-
-A exportação respeita busca, filtros e ordenação atuais, mas exporta todos os grupos resultantes, não apenas a página visível. É usado o EAN 1 normalizado do cadastro.
-
 ### Contagem Excel
 
 - arquivo: `contagem_filtrada_YYYY-MM-DD.xlsx`;
 - aba: `Contagem`;
 - exporta todos os resultados dos filtros e da ordenação atuais, não apenas a página visível;
-- inclui localizador, descrição do localizador, código LV, produto, EAN 1, descrição, quantidades escaneada e ajustada, lote, validade, coletor, inventariador e indicação de controlado.
+- inclui, nesta ordem: produto, quantidade ajustada, lote, validade (mês/ano), código localizador e código LV;
+- deixa o código LV em branco quando a contagem não possuir esse dado.
 
 ### PDF de divergências
 
@@ -630,8 +624,7 @@ São primitivas geradas/adaptadas do shadcn/ui e Radix. Não contêm regras de i
 | `handleAdjustedQtyCancel` | Cancela a edição |
 | `handleAddCount` | Cria uma contagem manual por EAN |
 | `handleDeleteProduct` | Exclui as contagens do produto após confirmação |
-| `handleExportTxt` | Exporta com separador `;` |
-| `handleExportTxtComma` | Exporta com separador `,` |
+| `handleExportExcel` | Exporta a contagem filtrada para Excel |
 | `handlePageChange` | Limita e troca a página atual |
 
 ### `src/components/ProductsTable.tsx` e `DiscrepanciesTable.tsx`

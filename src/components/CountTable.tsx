@@ -443,84 +443,6 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
     }
   }, [loadCounts, onUpdate, toast]);
 
-  const handleExportTxt = useCallback(() => {
-    if (sortedGroupedCounts.length === 0) {
-      toast({
-        title: "Sem dados",
-        description: "Não há contagens para exportar.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const txtContent = sortedGroupedCounts
-      .map((group) => {
-        return [
-          group.codLocalizador,
-          group.ean1,
-          group.quantidadeAjustada,
-          group.lote,
-          group.validade,
-          group.codigoLv,
-        ].join(";");
-      })
-      .join("\n");
-
-    const blob = new Blob([txtContent], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `contagem_${new Date().toISOString().split("T")[0]}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    toast({
-      title: "Arquivo exportado",
-      description: "O arquivo TXT foi baixado com sucesso.",
-    });
-  }, [sortedGroupedCounts, toast]);
-
-  const handleExportTxtComma = useCallback(() => {
-    if (sortedGroupedCounts.length === 0) {
-      toast({
-        title: "Sem dados",
-        description: "Não há contagens para exportar.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const txtContent = sortedGroupedCounts
-      .map((group) => {
-        return [
-          group.codLocalizador,
-          group.ean1,
-          group.quantidadeAjustada,
-          group.lote,
-          group.validade,
-          group.codigoLv,
-        ].join(",");
-      })
-      .join("\n");
-
-    const blob = new Blob([txtContent], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `contagem_virgula_${new Date().toISOString().split("T")[0]}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    toast({
-      title: "Arquivo exportado",
-      description: "O arquivo TXT com vírgula foi baixado com sucesso.",
-    });
-  }, [sortedGroupedCounts, toast]);
-
   const handleExportExcel = useCallback(() => {
     if (sortedGroupedCounts.length === 0) {
       toast({
@@ -532,26 +454,18 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
     }
 
     const rows = sortedGroupedCounts.map((group) => ({
-      LOCALIZADOR: group.codLocalizador,
-      "DESCRIÇÃO LOCALIZADOR": group.descricaoLocalizador,
-      "CÓDIGO LV": group.codigoLv,
       PRODUTO: group.produto,
-      "EAN 1": group.ean1,
-      "DESCRIÇÃO": group.descricao,
-      "QUANTIDADE ESCANEADA": group.quantidadeEscaneada,
-      "QUANTIDADE AJUSTADA": group.quantidadeAjustada,
+      QUANTIDADE: group.quantidadeAjustada,
       LOTE: group.lote,
-      VALIDADE: group.validade,
-      COLETOR: group.coletor,
-      INVENTARIADOR: group.inventariador,
-      CONTROLADO: group.controlado,
+      "VALIDADE (MÊS/ANO)": group.validade,
+      "CÓD. LOCALIZADOR": group.codLocalizador,
+      "CÓD. LV": group.codigoLv || "",
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(rows);
     worksheet["!cols"] = [
-      { wch: 18 }, { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 18 },
-      { wch: 40 }, { wch: 22 }, { wch: 21 }, { wch: 18 }, { wch: 16 },
-      { wch: 12 }, { wch: 24 }, { wch: 12 },
+      { wch: 18 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 20 },
+      { wch: 16 },
     ];
 
     const workbook = XLSX.utils.book_new();
@@ -664,14 +578,6 @@ export const CountTable = memo(({ refreshTrigger, onUpdate }: CountTableProps) =
             >
               <Plus className="w-4 h-4 mr-2" />
               Adicionar
-            </Button>
-            <Button onClick={handleExportTxt} variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              Exportar TXT (;)
-            </Button>
-            <Button onClick={handleExportTxtComma} variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              Exportar TXT (,)
             </Button>
             <Button onClick={handleExportExcel} variant="outline">
               <Download className="w-4 h-4 mr-2" />
