@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
+import { Link } from "react-router-dom";
 import { StatCard } from "@/components/StatCard";
 import { FileText, Barcode, AlertTriangle, Wallet, TrendingUp, TrendingDown, PackageX, Edit3, Users } from "lucide-react";
 import { getAllCounts, getAllProducts, Product, Count } from "@/lib/indexedDB";
@@ -802,6 +803,7 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background p-4 md:p-6">
       <div className="w-full">
+        <Link to="/" className="inline-block mb-4 text-sm text-primary hover:underline">Voltar aos inventarios</Link>
         <DashboardHeader onProductsUpdate={handleProductsUpdate} onExportDashboard={exportDashboardToPDF} />
         
         {isCalculating && (

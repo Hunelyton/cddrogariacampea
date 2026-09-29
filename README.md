@@ -1,18 +1,20 @@
 # Sistema de Inventário — CD Drogarias Campeã
 
-Aplicação web para importar o cadastro de produtos da CD Drogarias Campeã, receber contagens realizadas por coletores, ajustar quantidades, identificar divergências de estoque e exportar relatórios operacionais.
+Aplicação web para executar inventários da CD Drogarias Campeã em dois fluxos: **Picking** e **Rua**. O sistema importa cadastros e contagens, permite ajustes manuais, identifica divergências de estoque e exporta relatórios operacionais.
 
-O sistema funciona no navegador e não possui backend próprio. Produtos e contagens são persistidos localmente com IndexedDB; cálculos, importações e exportações são executados no dispositivo do usuário.
+O sistema funciona no navegador e não possui backend próprio. Cadastros e contagens são persistidos localmente com IndexedDB; cálculos, importações e exportações são executados no dispositivo do usuário.
 
 ## Sumário
 
 - [Objetivo e recursos](#objetivo-e-recursos)
+- [Navegação e módulos](#navegação-e-módulos)
 - [Fluxo recomendado de uso](#fluxo-recomendado-de-uso)
 - [Tecnologias](#tecnologias)
 - [Instalação e execução](#instalação-e-execução)
 - [Scripts disponíveis](#scripts-disponíveis)
 - [Arquitetura](#arquitetura)
 - [Layout e telas](#layout-e-telas)
+- [Inventário de Rua](#inventário-de-rua)
 - [Regras de importação](#regras-de-importação)
 - [Regras de negócio e cálculos](#regras-de-negócio-e-cálculos)
 - [Persistência e cache](#persistência-e-cache)
@@ -24,7 +26,11 @@ O sistema funciona no navegador e não possui backend próprio. Produtos e conta
 
 ## Objetivo e recursos
 
-O aplicativo atende ao ciclo de inventário:
+O aplicativo atende a dois ciclos de inventário.
+
+### Picking
+
+Fluxo voltado ao inventário de separação, com cadastro detalhado de produtos, EANs, lote, validade, localizador, custo gerencial e análise financeira das divergências.
 
 1. Importação do cadastro de produtos por planilha Excel.
 2. Importação de um ou mais arquivos de contagem em TXT.
@@ -32,9 +38,9 @@ O aplicativo atende ao ciclo de inventário:
 4. Agrupamento das leituras por produto.
 5. Inclusão manual, ajuste ou exclusão de contagens.
 6. Cálculo de divergências físicas e financeiras.
-7. Exportação das contagens em TXT e dos relatórios em PDF.
+7. Exportação das contagens em Excel e dos relatórios em PDF.
 
-Principais recursos:
+Principais recursos do Picking:
 
 - até 12 EANs por produto;
 - download de um modelo XLSX de cadastro;
@@ -47,7 +53,40 @@ Principais recursos:
 - armazenamento local e cache temporário para melhorar desempenho;
 - layout responsivo para desktop, tablet e celular.
 
+### Rua
+
+Fluxo voltado ao inventário de rua, com confronto por código e localizador a partir de um layout simples de sete colunas.
+
+Principais recursos do inventário de Rua:
+
+- tela própria em `/rua`;
+- importação de cadastro em XLS, XLSX ou TXT;
+- importação de contagem em TXT;
+- confronto por `CODIGO` + `CODIGO_LOCALIZADOR`;
+- inserção manual de contagens;
+- ajuste inline da quantidade contada;
+- indicadores de códigos, unidades, divergências, operadores, não cadastrados, manuais e ajustes;
+- busca nas abas de cadastro, contagem e divergências;
+- exportação de contagens em TXT e XLSX;
+- geração de PDF completo do inventário de rua.
+
+## Navegação e módulos
+
+| Rota | Tela | Uso |
+| --- | --- | --- |
+| `/` | Seleção de inventário | Escolha entre Picking e Rua |
+| `/picking` | Dashboard de Picking | Inventário de separação com EAN, lote, custo e relatórios financeiros |
+| `/rua` | Dashboard de Rua | Inventário por código/localizador com relatório operacional |
+| `*` | Página 404 | Rota inexistente com link de retorno |
+
 ## Fluxo recomendado de uso
+
+### Escolha do módulo
+
+1. Abra a aplicação.
+2. Na tela inicial, escolha **Picking** ou **Rua** conforme o tipo de inventário.
+
+### Picking
 
 1. Abra **Importar cadastro** e, se necessário, baixe o modelo XLSX.
 2. Preencha ou exporte o cadastro no formato esperado e importe a planilha.
@@ -55,10 +94,22 @@ Principais recursos:
 4. Abra **Importar contagem**, selecione os arquivos TXT e informe coletor e inventariador.
 5. Confira a aba **Contagem**; inclua, ajuste ou exclua registros quando necessário.
 6. Analise a aba **Divergências**.
-7. Exporte o relatório geral, o relatório de divergências ou os arquivos TXT tratados.
+7. Exporte o relatório geral, o relatório de divergências ou a planilha de contagem filtrada.
 8. Use **Limpar dados** somente ao iniciar um novo inventário ou quando quiser remover todo o conteúdo local.
 
 > Os dados ficam no navegador utilizado. Trocar de computador, navegador, perfil ou limpar os dados do site pode tornar o inventário anterior indisponível.
+
+### Rua
+
+1. Acesse **Rua** na tela inicial.
+2. Importe o cadastro de rua com as sete colunas esperadas.
+3. Importe a contagem de rua em TXT.
+4. Confira os cards e a aba **Divergências**.
+5. Use a aba **Contagem** para inserir linhas manuais, ajustar quantidades e exportar TXT/XLSX.
+6. Exporte o PDF completo em **Exportar relatório**.
+7. Use **Limpar dados** apenas para iniciar novamente o inventário de rua.
+
+> O Picking e a Rua usam bancos IndexedDB separados. Limpar um módulo não limpa automaticamente o outro.
 
 ## Tecnologias
 
@@ -73,7 +124,7 @@ Principais recursos:
 | SheetJS (`xlsx`) | Leitura e geração de planilhas Excel |
 | pdfMake | Geração dos relatórios PDF |
 | Lucide React | Ícones da interface |
-| React Router | Rotas `/` e página 404 |
+| React Router | Rotas `/`, `/picking`, `/rua` e página 404 |
 | Sonner e Toast | Mensagens de sucesso e erro |
 | Web Worker | Cálculo dos indicadores fora da thread principal |
 
@@ -133,9 +184,11 @@ React / páginas e componentes
 
 1. `src/main.tsx` monta o React no elemento `#root`.
 2. `src/App.tsx` configura providers globais, notificações e rotas.
-3. A rota `/` renderiza `src/pages/Index.tsx`.
-4. `Index` consulta IndexedDB/cache, solicita os indicadores e monta cabeçalho, cards e abas.
-5. As tabelas são carregadas sob demanda com `React.lazy` e `Suspense`.
+3. A rota `/` renderiza a tela de seleção de inventário.
+4. A rota `/picking` renderiza `src/pages/Index.tsx`.
+5. A rota `/rua` renderiza `src/components/StreetInventory.tsx`.
+6. No Picking, `Index` consulta IndexedDB/cache, solicita os indicadores e monta cabeçalho, cards e abas.
+7. As tabelas do Picking são carregadas sob demanda com `React.lazy` e `Suspense`.
 
 ### Atualização dos dados
 
@@ -147,6 +200,13 @@ Importações e alterações chamam `handleProductsUpdate`. Esse callback:
 - solicita um novo cálculo dos indicadores.
 
 ## Layout e telas
+
+### Tela inicial
+
+A rota `/` apresenta a logo da CD Drogarias Campeã e dois atalhos:
+
+- **Picking:** direciona para `/picking`;
+- **Rua:** direciona para `/rua`.
 
 ### Estrutura visual do dashboard
 
@@ -162,7 +222,7 @@ Importações e alterações chamam `handleProductsUpdate`. Esse callback:
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### Cabeçalho
+### Cabeçalho do Picking
 
 Exibe logo, razão social, CNPJ e endereço. Possui quatro ações:
 
@@ -211,7 +271,6 @@ O dashboard apresenta nove cards:
 - edição inline da quantidade ajustada, com Enter para salvar e Escape para cancelar;
 - exclusão das leituras de um produto, lote e localizador, após confirmação;
 - a confirmação de exclusão apresenta logo, nome da empresa, produto, EAN, descrição, lote, validade e localizador;
-- exportação TXT com ponto e vírgula ou vírgula;
 - exportação Excel com todos os campos, respeitando os filtros e a ordenação selecionados;
 - ordenação por cabeçalho e paginação de 50 grupos.
 
@@ -237,11 +296,68 @@ O EAN informado pode corresponder a qualquer um dos 12 EANs do produto; a tela a
 
 ### Página não encontrada
 
-Qualquer rota diferente de `/` renderiza `NotFound.tsx`, registra a tentativa no console e oferece retorno à página inicial.
+Qualquer rota fora de `/`, `/picking` e `/rua` renderiza `NotFound.tsx`, registra a tentativa no console e oferece retorno à página inicial.
+
+## Inventário de Rua
+
+O módulo de Rua usa um modelo operacional mais simples que o Picking. Ele compara o cadastro esperado e a contagem realizada pela combinação de código do item e código localizador.
+
+### Layout esperado
+
+Cadastro e contagem usam as mesmas sete colunas, sempre com cabeçalho:
+
+| Coluna | Cabeçalho | Campo interno |
+| --- | --- | --- |
+| A | CRACHA | `cracha` |
+| B | INVENTARIO_ESCOPO | `inventarioEscopo` |
+| C | NUMERO_CONTAGEM | `numeroContagem` |
+| D | TIPO_COLETA | `tipoColeta` |
+| E | CODIGO_LOCALIZADOR | `codigoLocalizador` |
+| F | CODIGO | `codigo` |
+| G | QUANTIDADE | `quantidade` |
+
+Arquivos XLS, XLSX e TXT são lidos pela primeira aba ou pelo texto delimitado. Para TXT, o separador é detectado entre tabulação, ponto e vírgula, pipe e vírgula.
+
+### Regras do módulo
+
+- a chave de confronto é `CODIGO` + `CODIGO_LOCALIZADOR`;
+- a quantidade esperada vem do cadastro importado;
+- a quantidade contada vem da contagem importada ou inserida manualmente;
+- `diferença = contado - cadastro`;
+- linhas com diferença zero são tratadas como conferidas;
+- linhas sem cadastro são marcadas como **Não cadastrado**;
+- linhas cadastradas sem contagem ficam com status **Não contado**;
+- a aba **Divergências** mostra divergências por padrão e também pesquisa em dados relacionados de cadastro e contagem;
+- ajustes de quantidade são salvos em `quantidadeAjustada`, preservando a quantidade original.
+
+### Ações disponíveis
+
+- **Importar cadastro:** substitui o cadastro de rua atual pelo arquivo importado;
+- **Importar contagem:** substitui a contagem de rua atual pelo arquivo importado;
+- **Inserção manual:** adiciona uma linha de contagem com origem manual;
+- **Exportar TXT:** baixa `contagem-rua.txt` com cabeçalho e colunas separadas por tabulação;
+- **Exportar XLSX:** baixa `contagem-rua.xlsx`;
+- **Exportar relatório:** baixa `relatorio-inventario-rua.pdf`;
+- **Limpar dados:** limpa apenas os stores do banco do inventário de rua.
+
+### PDF do inventário de rua
+
+O relatório de rua inclui:
+
+- resumo com códigos cadastrados, códigos contados, unidades contadas e divergências;
+- sobras, faltas, não cadastrados e itens ajustados;
+- resumo operacional;
+- análise por operador/crachá;
+- produtos não cadastrados;
+- top 50 maiores faltas;
+- top 50 maiores sobras;
+- tabela de divergências;
+- contagem completa;
+- cadastro completo.
 
 ## Regras de importação
 
-### Cadastro XLS/XLSX
+### Cadastro XLS/XLSX do Picking
 
 O modal **Importar Cadastro de Produtos** aceita `.xlsx` e `.xls`. A primeira planilha do arquivo é utilizada, a linha 1 é tratada como cabeçalho e os dados começam na linha 2.
 
@@ -266,7 +382,7 @@ Se todos os EANs estiverem vazios, o importador copia o código de `PRODUTO` par
 
 > Uma nova importação adiciona registros à base existente; ela não limpa automaticamente o cadastro anterior.
 
-### Contagem TXT
+### Contagem TXT do Picking
 
 O modal aceita vários arquivos `.txt`. Cada arquivo recebe um coletor entre `C1` e `C30` e exige o nome do inventariador.
 
@@ -297,6 +413,12 @@ Regras do parser:
 - adiciona as contagens à base já existente em lotes de 500.
 
 O arquivo não deve possuir cabeçalho, pois qualquer linha com duas posições é interpretada como contagem.
+
+### Cadastro e contagem do inventário de Rua
+
+O módulo de Rua aceita cadastro em `.xlsx`, `.xls` ou `.txt` e contagem em `.txt`. Diferente do Picking, os arquivos de Rua devem possuir cabeçalho e seguir exatamente as sete colunas descritas em [Inventário de Rua](#inventário-de-rua).
+
+Ao importar cadastro ou contagem de Rua, os dados anteriores do respectivo tipo são substituídos. Isso permite reiniciar somente o cadastro ou somente a contagem sem interferir no Picking.
 
 ## Regras de negócio e cálculos
 
@@ -349,7 +471,7 @@ Um grupo de produto + lote + localizador é considerado ajustado quando a soma a
 
 ## Persistência e cache
 
-### IndexedDB
+### IndexedDB do Picking
 
 Banco: `InventoryDB`<br>
 Versão: `3`
@@ -397,6 +519,33 @@ interface Count {
   inventariador: string;
   produto?: string;
   descricao?: string;
+}
+```
+
+### IndexedDB da Rua
+
+Banco: `StreetInventoryDB`<br>
+Versão: `2`
+
+| Object store | Chave | Conteúdo |
+| --- | --- | --- |
+| `products_v2` | `id`, auto incremento | Cadastro esperado do inventário de rua |
+| `counts` | `id`, auto incremento | Contagens importadas, manuais e ajustadas |
+
+Modelo usado no cadastro e na contagem de rua:
+
+```ts
+interface StreetRow {
+  id?: number;
+  cracha: string;
+  inventarioEscopo: string;
+  numeroContagem: string;
+  tipoColeta: string;
+  codigoLocalizador: string;
+  codigo: string;
+  quantidade: number;
+  quantidadeAjustada?: number;
+  manual?: boolean;
 }
 ```
 
@@ -470,10 +619,19 @@ TTLs disponíveis: curto de 1 minuto, médio de 5 minutos e longo de 15 minutos.
 - utiliza o cadastro e as contagens atuais, incluindo inserções manuais e ajustes;
 - inclui identificação da empresa, logo e paginação.
 
+### Exportações do inventário de Rua
+
+| Exportação | Arquivo | Conteúdo |
+| --- | --- | --- |
+| Contagem TXT | `contagem-rua.txt` | Cabeçalho e linhas de contagem separadas por tabulação |
+| Contagem XLSX | `contagem-rua.xlsx` | Aba `Contagem` com as colunas de contagem e quantidade ajustada |
+| Relatório PDF | `relatorio-inventario-rua.pdf` | Resumo, análise por operador, não cadastrados, maiores faltas/sobras, divergências, contagem e cadastro |
+
 ## Estrutura de arquivos
 
 ```text
 .
+├── MODELOS/                 # Modelos e arquivos de simulação de importação
 ├── public/                  # Arquivos públicos copiados sem transformação
 ├── src/
 │   ├── assets/              # Imagens importadas pelo bundle
@@ -521,18 +679,27 @@ TTLs disponíveis: curto de 1 minuto, médio de 5 minutos e longo de 15 minutos.
 | `public/robots.txt` | Orientação para rastreadores |
 | `public/placeholder.svg` | Imagem genérica de placeholder |
 
+### Modelos e documentos auxiliares
+
+| Arquivo | Uso |
+| --- | --- |
+| `MODELOS/MODELO_IMPORTACAO_CADASTRO.xlsx` | Modelo de cadastro do Picking |
+| `MODELOS/MODELO_IMPORTACAO_CONTAGEM.txt` | Exemplo de contagem TXT do Picking |
+| `MODELOS/CADASTRO_SIMULACAO_DIVERGENCIAS.xlsx` | Cadastro de teste para validar divergências |
+| `MODELOS/LEIA-ME-SIMULACAO.md` | Instruções para simular uma importação |
 ### Componentes de negócio
 
 | Arquivo | Responsabilidade |
 | --- | --- |
 | `src/components/DashboardHeader.tsx` | Identificação da empresa, ações principais, limpeza e abertura dos modais |
 | `src/components/StatCard.tsx` | Card reutilizável para indicadores e variantes de cor |
-| `src/components/DashboardTabs.tsx` | Navegação entre as três abas e lazy loading das tabelas |
+| `src/components/DashboardTabs.tsx` | Navegação entre as três abas do Picking e lazy loading das tabelas |
 | `src/components/ImportDialog.tsx` | Download do modelo e importação do cadastro Excel |
 | `src/components/ImportCountDialog.tsx` | Seleção, parametrização, parsing e importação dos TXT |
 | `src/components/ProductsTable.tsx` | Busca, ordenação, paginação e visualização do cadastro |
-| `src/components/CountTable.tsx` | Agrupamento, filtros, inclusão manual, ajustes, exclusão e exportação TXT |
-| `src/components/DiscrepanciesTable.tsx` | Cálculo, filtros, tabela e PDF das divergências |
+| `src/components/CountTable.tsx` | Agrupamento, filtros, inclusão manual, ajustes, exclusão e exportação XLSX |
+| `src/components/DiscrepanciesTable.tsx` | Cálculo, filtros, tabela e exportação PDF/XLSX das divergências |
+| `src/components/StreetInventory.tsx` | Dashboard completo do inventário de Rua |
 
 ### Hooks e bibliotecas internas
 
@@ -543,6 +710,7 @@ TTLs disponíveis: curto de 1 minuto, médio de 5 minutos e longo de 15 minutos.
 | `src/hooks/use-mobile.tsx` | Detecta viewport abaixo de 768 px |
 | `src/hooks/use-toast.ts` | Store, reducer e API do sistema de toast shadcn |
 | `src/lib/indexedDB.ts` | Modelos, abertura do banco e CRUD de produtos/contagens |
+| `src/lib/streetInventory.ts` | Modelos, parser e persistência do inventário de Rua |
 | `src/lib/cache.ts` | Cache em memória com TTL e invalidação |
 | `src/lib/chunkProcessor.ts` | Processamento síncrono/assíncrono em chunks, batches, debounce e throttle |
 | `src/lib/utils.ts` | União de classes (`cn`) e conversão de número brasileiro |
@@ -552,8 +720,8 @@ TTLs disponíveis: curto de 1 minuto, médio de 5 minutos e longo de 15 minutos.
 | Arquivo | Responsabilidade |
 | --- | --- |
 | `src/main.tsx` | Inicializa `ReactDOM.createRoot` |
-| `src/App.tsx` | QueryClient, tooltips, toasts, BrowserRouter e rotas |
-| `src/pages/Index.tsx` | Orquestra dashboard, cards, dados e relatório PDF geral |
+| `src/App.tsx` | QueryClient, tooltips, toasts, BrowserRouter, seleção de módulo e rotas |
+| `src/pages/Index.tsx` | Orquestra dashboard de Picking, cards, dados e relatório PDF geral |
 | `src/pages/NotFound.tsx` | Página 404 |
 | `src/index.css` | Diretivas Tailwind, variáveis de tema claro/escuro e estilos globais |
 | `src/App.css` | Estilos legados do template Vite; não é importado atualmente |
@@ -593,6 +761,17 @@ São primitivas geradas/adaptadas do shadcn/ui e Radix. Não contêm regras de i
 | `deleteCountsByProduct` | Exclui as contagens de uma combinação produto + lote + localizador |
 | `updateCountsByProduct` | Redistribui e salva o total ajustado de uma combinação produto + lote + localizador |
 | `invalidateProductCache` | Descarta explicitamente o mapa EAN → produto |
+
+### `src/lib/streetInventory.ts`
+
+| Função | Efeito |
+| --- | --- |
+| `getStreetData` | Lê cadastro e contagem do banco `StreetInventoryDB` |
+| `replaceStreetData` | Substitui todo o cadastro ou toda a contagem do inventário de Rua |
+| `saveStreetCount` | Cria ou atualiza uma linha de contagem de Rua |
+| `readStreetFile` | Lê XLS/XLSX ou TXT e transforma o conteúdo em matriz de texto |
+| `parseStreetProducts` | Valida cabeçalho e converte linhas de cadastro de Rua |
+| `parseStreetCounts` | Valida cabeçalho e converte linhas de contagem de Rua |
 
 ### `src/components/ImportDialog.tsx`
 
@@ -635,6 +814,20 @@ São primitivas geradas/adaptadas do shadcn/ui e Radix. Não contêm regras de i
 - `handlePageChange` controla a paginação;
 - `exportToPDF`, em divergências, monta e baixa o relatório filtrado.
 
+### `src/components/StreetInventory.tsx`
+
+| Função/bloco | Efeito |
+| --- | --- |
+| `comparison` | Consolida cadastro e contagem por código + localizador |
+| `metrics` | Calcula cards de códigos, unidades, divergências, operadores, não cadastrados, manuais e ajustes |
+| `importFile` | Importa cadastro ou contagem e substitui os dados do respectivo tipo |
+| `addManual` | Salva uma contagem manual |
+| `clearStreetData` | Limpa cadastro e contagem de Rua |
+| `updateAdjusted` | Persiste a quantidade ajustada ao sair do campo |
+| `exportCounts` | Exporta a contagem de Rua em TXT ou XLSX |
+| `exportReport` | Gera o PDF completo do inventário de Rua |
+| `searchBox` | Monta a busca compartilhada das abas |
+
 ### `src/pages/Index.tsx`
 
 | Função/bloco | Efeito |
@@ -675,6 +868,7 @@ Há tokens para tema escuro, embora a interface atual não exponha um seletor de
 
 Comportamento responsivo:
 
+- tela inicial centraliza a escolha de módulo e mantém os cartões legíveis no celular;
 - cabeçalho empilha logo e ações abaixo do breakpoint `lg`;
 - cards usam 1 coluna no celular, 2 em `md` e 3 em `lg`;
 - abas ficam em 1 coluna no celular e 3 em `md`;
@@ -686,8 +880,11 @@ Comportamento responsivo:
 
 - Não há autenticação, API ou sincronização entre dispositivos.
 - IndexedDB é a fonte persistente; o cache em memória é apenas uma otimização.
-- Importações são cumulativas. Use **Limpar dados** antes de um novo inventário quando não quiser somar dados antigos.
-- A limpeza remove todos os dados locais do aplicativo no navegador e recarrega a página.
+- O Picking usa `InventoryDB`; a Rua usa `StreetInventoryDB`.
+- No Picking, importações são cumulativas. Use **Limpar dados** antes de um novo inventário quando não quiser somar dados antigos.
+- Na Rua, importar cadastro ou contagem substitui apenas os dados do respectivo tipo.
+- A limpeza do Picking remove produtos, contagens, `localStorage`, `sessionStorage` e caches do navegador, depois recarrega a página.
+- A limpeza da Rua remove cadastro e contagem do inventário de Rua, sem limpar o banco do Picking.
 - Leituras sem produto cadastrado aparecem na Contagem e no indicador próprio; na aba Divergências ficam ocultas até o filtro **Mostrar não cadastrados** ser ativado, quando passam a ser o único conjunto exibido, com custo e valor financeiro iguais a zero.
 - O fallback sem Web Worker calcula somente a quantidade de produtos cadastrados; os demais cards podem permanecer zerados.
 - A aplicação possui dois sistemas de toast (`shadcn` e `Sonner`) por compatibilidade entre componentes.
